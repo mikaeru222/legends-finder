@@ -94,7 +94,6 @@ body {
   background: #fff;
 }
 
-
 /* ---- 結果ボックス ---- */
 .result {
   background: #eaf3ff;
@@ -174,6 +173,7 @@ body {
 .history-restore{ background:#2f80ed; color:#fff; }
 .history-delete{ background:#ff6b6b; color:#fff; }
 .history-clear{ background:#888; color:#fff; }
+
 /* ==== トップのカード配置（スクショ風） ==== */
 .card-head{
   display:flex; align-items:center; justify-content:space-between;
@@ -194,6 +194,7 @@ body {
 
 /* 下段の補助ボタン行（履歴など） */
 .subrow{ display:flex; gap:8px; margin-top:8px; }
+
 /* タイトル（立体っぽい影） */
 .section-title {
   font-size: 20px; font-weight: 800; letter-spacing: .02em;
@@ -231,7 +232,77 @@ body {
   padding: 0 14px;
 }
 
-
-
 /* 3ボタン横並び（逆順／クリア／検索） */
 .actions3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 12px; }
+
+/* ===============================
+   検索ボタン（.btn.btn-blue）強制上書き
+   =============================== */
+:root { --search-blue: #1677FF; }
+
+.btn.btn-blue,
+.btn.btn-blue:link,
+.btn.btn-blue:visited {
+  color: #fff !important;
+  background: var(--search-blue) !important;
+  border-color: var(--search-blue) !important;
+}
+.btn.btn-blue:hover { filter: brightness(0.96); }
+.btn.btn-blue:disabled,
+.btn.btn-blue[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  filter: none;
+}
+
+/* =======================================================
+   ここから：iPhone/スマホ向け “横スクロール無し” 最適化
+   ======================================================= */
+
+/* セーフエリア余白（iPhone下部） */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0); }
+.app { padding-bottom: calc(16px + var(--safe-bottom)); }
+
+/* 結果カードの長文折り返し（切れ防止） */
+.result, .result * { overflow-wrap: anywhere; word-break: break-word; }
+
+/* 480px以下（iPhone縦）でコンパクト化 */
+@media (max-width: 480px) {
+  .app { max-width: 100vw; padding-left: 8px; padding-right: 8px; }
+
+  .grid-wrap { overflow-x: hidden; }         /* 横スクロール禁止 */
+  .grid {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    border-spacing: 1px;                      /* セル間をさらに詰める */
+  }
+  .grid th, .grid td {
+    padding: 2px 2px !important;              /* 余白を最小化 */
+    font-size: 11px !important;               /* 文字を少し縮小 */
+    line-height: 1.15 !important;
+  }
+  .grid th { font-size: 12px !important; }
+  .grid .rowhead { width: 22px !important; font-size: 10px !important; }
+
+  /* GLセルの省スペース（番号のみの列） */
+  .grid td.cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* CX3の複数トークン“チップ”を極小化 */
+  .grid td.cell div { gap: 1px !important; }
+  .grid td.cell div span {
+    font-size: 9px !important;
+    padding: 0 2px !important;
+    line-height: 1.2 !important;
+  }
+
+  /* 見出しとフォームも少し詰める */
+  .section-title { font-size: 18px; }
+  .six-inputs { gap: 8px; }
+  .six-inputs input { height: 40px; font-size: 16px; }
+}
+
+/* iOSでフォーカス時に拡大しない保険 */
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea, button { font-size: 16px; }
+}
