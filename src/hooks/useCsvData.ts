@@ -1,97 +1,139 @@
-import { useCallback, useEffect, useState } from 'react'
-import Papa from 'papaparse'
+// src/hooks/useCsvData.ts
+// CSV を読み込んで { rows, sets, loading, error, reload } を返すフック。
+// BASE_URL が /legends-finder/ のようにサブパスな場合でも、/xxx.csv を
+// /legends-finder/xxx.csv に“強制”で付け替える toAbs を実装。
 
-export type CsvRow = {
-  set: string
-  cyl: 'L' | 'R'
-  col: number
-  row: number
-  num?: string | number
-  rarity?: string
-  name?: string
+import { useEffect, useMemo, useState } from "react";
+
+/** 1行ずつ CSV をパース（"..." に対応、BOM 除去） */
+function parseCsv(text: string): any[] {
+  // BOM 除去
+  const t = text.replace(/^\uFEFF/, "");
+  const lines = t.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const heads = splitCsvLine(lines[0]);
+  const rows: any[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitCsvLine(lines[i]);
+    const obj: any = {};
+    heads.forEach((h, idx) => (obj[h] = cols[idx] ?? ""));
+    rows.push(obj);
+  }
+  return rows;
 }
 
-const toHalf = (s: string) =>
-  s.replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\u3000/g, ' ')
-const normSet = (s: string) => toHalf((s || '').trim()).toUpperCase().replace(/\s+/g, '')
+/** CSV 1行を分割（カンマ＆ダブルクォート対応） */
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      // 連続する "" はエスケープされた "
+      if (inQ && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQ = !inQ;
+      }
+      continue;
+    }
+    if (ch === "," && !inQ) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
 
-export function useCsvData(url: string) {
-  const [rows, setRows] = useState<CsvRow[]>([])
-  const [sets, setSets] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
+/** BASE_URL を考慮して絶対 URL を作る（今回のキモ） */
+const toAbs = (p: string): string => {
+  if (!p) return "";
+  // すでに http(s)
+  if (/^https?:\/\//i.test(p)) return p;
 
-  const reload = useCallback(() => {
-    setLoading(true)
-    setError(null)
+  const baseEnv = (import.meta as any)?.env?.BASE_URL || "/";
+  const base = baseEnv.startsWith("/") ? baseEnv : `/${baseEnv}`;
+  const baseNorm = base.endsWith("/") ? base : `${base}/`;
+  const origin =
+    typeof window !== "undefined" && (window as any).location?.origin
+      ? (window as any).location.origin.replace(/\/+$/, "")
+      : "";
 
-    fetch(url, { cache: 'no-cache' })
-      .then(r => {
-        if (!r.ok) throw new Error(`CSV fetch failed: ${r.status}`)
-        return r.text()
-      })
-      .then(text => {
-        const parsed = Papa.parse<Record<string, any>>(text, {
-          header: true,
-          skipEmptyLines: true,
-          transformHeader: h => (h ?? '').toString().trim()
-        })
+  // 先頭が / のパスでも、BASE_URL が "/" でないなら BASE_URL 配下に付け替える
+  if (p.startsWith("/")) {
+    return origin + (baseNorm === "/" ? p : baseNorm + p.replace(/^\/+/, ""));
+  }
+  // 相対パスは常に BASE_URL を前置
+  return origin + baseNorm + p.replace(/^\/+/, "");
+};
 
-        if (parsed.errors?.length) {
-          console.warn('PapaParse errors:', parsed.errors)
-        }
+/** CSV の候補「弾」を抽出（set / series / シリーズ / 弾 を統一） */
+function deriveSets(rows: any[]): string[] {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const key = String(
+      r?.set ?? r?.series ?? r?.["シリーズ"] ?? r?.["弾"] ?? ""
+    )
+      .trim()
+      .toUpperCase();
+    if (key) seen.add(key);
+  }
+  return [...seen].sort((a, b) => {
+    const na = parseInt(a.replace(/\D+/g, ""), 10);
+    const nb = parseInt(b.replace(/\D+/g, ""), 10);
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+    return a.localeCompare(b, "ja");
+  });
+}
 
-        const pick = (o: Record<string, any>, keys: string[]) => {
-          for (const k of keys) if (k in o) return o[k]
-          return undefined
-        }
+/** デフォルトの CSV パス（環境変数優先） */
+const DEFAULT_URL =
+  (import.meta as any)?.env?.VITE_CSV_URL || "cards.sample.csv";
 
-        const out: CsvRow[] = []
-        for (const raw of parsed.data) {
-          const vSet = pick(raw, ['set', 'SET', 'シリーズ', '弾', 'series'])
-          const vCyl = pick(raw, ['cyl', 'Cyl', 'LR', 'lr', 'side', '左右'])
-          const vCol = pick(raw, ['col', 'COL', 'column', '列'])
-          const vRow = pick(raw, ['row', 'ROW', '行'])
-          if (vSet == null || vCyl == null || vCol == null || vRow == null) continue
-
-          const cyl = String(vCyl).trim().toUpperCase().startsWith('R') ? 'R' : 'L'
-          const col = Number(String(vCol).trim())
-          const row = Number(String(vRow).trim())
-          if (!Number.isFinite(col) || !Number.isFinite(row) || col <= 0 || row <= 0) continue
-
-          out.push({
-            set: String(vSet).trim(),
-            cyl,
-            col,
-            row,
-            num: pick(raw, ['num', '番号', 'No', 'NO']),
-            rarity: pick(raw, ['rarity', 'レアリティ', 'レア', 'rar']),
-            name: pick(raw, ['name', 'カード名', '名称', 'title'])
-          })
-        }
-
-        // ユニークなセット名
-        const uniq = Array.from(new Map(out.map(r => [normSet(r.set), r.set])).values())
-        uniq.sort((a, b) => {
-          const na = parseInt(a.replace(/\D+/g, ''), 10)
-          const nb = parseInt(b.replace(/\D+/g, ''), 10)
-          if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb
-          return a.localeCompare(b, 'ja')
-        })
-
-        setRows(out)
-        setSets(uniq)
-        console.log(`useCsvData rows=${out.length}`, out[0])
-        console.log('useCsvData sets=', uniq)
-      })
-      .catch(e => setError(e as Error))
-      .finally(() => setLoading(false))
-  }, [url])
+export function useCsvData(csvUrl?: string) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [nonce, setNonce] = useState<number>(0);
 
   useEffect(() => {
-    reload()
-  }, [reload])
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const url = toAbs(csvUrl || DEFAULT_URL);
+        // デバッグしたい時はコメント外して確認してください
+        // console.log("[useCsvData] finalUrl =", url);
 
-  return { rows, sets, loading, error, reload }
+        const res = await fetch(url, { cache: "no-cache" });
+        if (!res.ok) {
+          throw new Error(`CSV fetch failed: ${res.status} ${res.statusText}`);
+        }
+        const text = await res.text();
+        const arr = parseCsv(text);
+        if (!cancelled) setRows(arr);
+      } catch (e: any) {
+        if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [csvUrl, nonce]);
+
+  const sets = useMemo(() => deriveSets(rows), [rows]);
+  const reload = () => setNonce((n) => n + 1);
+
+  return { rows, sets, loading, error, reload };
 }
-export default useCsvData
+
+export type UseCsvDataReturn = ReturnType<typeof useCsvData>;
