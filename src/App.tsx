@@ -12,13 +12,13 @@ const abs = (path: string) => {
   try {
     const baseEnv = (import.meta as any)?.env?.BASE_URL;
     const base = (typeof baseEnv === "string" && baseEnv.length) ? baseEnv : "/";
-    const origin = (typeof window !== "undefined" && window.location?.origin)
-      ? window.location.origin : "http://localhost";
+    const origin = (typeof window !== "undefined" && (window as any).location?.origin)
+      ? (window as any).location.origin : "http://localhost";
     const baseNorm = base.startsWith("/") ? base : ("/" + base);
     return origin.replace(/\/+$/, "") + baseNorm + String(path).replace(/^\/+/, "");
   } catch { return "/" + String(path).replace(/^\/+/, ""); }
 };
-const CSV_URL = abs(import.meta.env.VITE_CSV_URL || "cards.cx3.csv");
+const CSV_URL = abs((import.meta as any).env.VITE_CSV_URL || "cards.cx3.csv");
 const MAX_LR_CANDIDATES = 4;
 const SEARCH_BLUE = "#1677FF";
 
@@ -71,6 +71,59 @@ const nav = (r: Route) => { location.hash = "/" + r; };
 
 const isCx3 = (setKey: string) => /CX3|XC3|CX-3/i.test(setKey);
 
+/* ========= 永続保存（複数件対応 / localStorage） ========= */
+export type SavedEntry = { id: string; pattern: number[]; memo: string; ts: number };
+const listKey = (side:"L"|"R", setKey:string) => `legends:savedList:${setKey}:${side}`;
+
+// 旧仕様(単一保存)からの移行用
+type LegacySaved = { pattern?: number[]; loops?: number|null; memo: string; ts: number };
+const legacyKey = (side:"L"|"R", setKey:string) => `legends:savedMemo:${setKey}:${side}`;
+
+function loadSavedList(side:"L"|"R", setKey:string): SavedEntry[] {
+  try{
+    const raw = localStorage.getItem(listKey(side,setKey));
+    if (raw) return (JSON.parse(raw) as SavedEntry[]).filter(x=>Array.isArray(x.pattern));
+    // 単一保存があれば1件として取り込む（1度だけ）
+    const m = localStorage.getItem(legacyKey(side,setKey));
+    if (m) {
+      const old = JSON.parse(m) as LegacySaved;
+      if (old?.pattern?.length) {
+        const ent: SavedEntry = {
+          id: String(old.ts || Date.now()),
+          pattern: old.pattern, memo: old.memo || "", ts: old.ts || Date.now()
+        };
+        saveSavedList(side,setKey,[ent]);
+        localStorage.removeItem(legacyKey(side,setKey));
+        return [ent];
+      }
+    }
+    return [];
+  }catch{ return []; }
+}
+function saveSavedList(side:"L"|"R", setKey:string, list:SavedEntry[]){
+  try{ localStorage.setItem(listKey(side,setKey), JSON.stringify(list)); }catch{}
+}
+function addSavedEntry(side:"L"|"R", setKey:string, pattern:number[], memo:string){
+  const list = loadSavedList(side,setKey);
+  const ent: SavedEntry = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+    pattern: [...pattern], memo: memo.slice(0,128), ts: Date.now()
+  };
+  saveSavedList(side,setKey, [ent, ...list]);
+}
+function updateSavedEntry(side:"L"|"R", setKey:string, id:string, patch:Partial<Pick<SavedEntry,"pattern"|"memo">>){
+  const list = loadSavedList(side,setKey);
+  const next = list.map(x=> x.id===id ? { ...x, ...patch, ts: Date.now() } : x);
+  saveSavedList(side,setKey, next);
+}
+function removeSavedEntry(side:"L"|"R", setKey:string, id:string){
+  const list = loadSavedList(side,setKey);
+  saveSavedList(side,setKey, list.filter(x=>x.id!==id));
+}
+function findSaved(side:"L"|"R", setKey:string, id:string): SavedEntry | undefined {
+  return loadSavedList(side,setKey).find(x=>x.id===id);
+}
+
 /* ========= App ========= */
 export default function App() {
   const { rows, sets, loading, error, reload } = useCsvData(CSV_URL);
@@ -120,7 +173,7 @@ export default function App() {
   const [openHistL, setOpenHistL] = useState(false);
   const [openHistR, setOpenHistR] = useState(false);
 
-  /* ===== 単一“小窓”入力 ===== */
+  /* ===== 入力 ===== */
   const [candLInput, setCandLInput] = useState("");
   const [candLDigits, setCandLDigits] = useState<number[]>([]);
   const [candRInput, setCandRInput] = useState("");
@@ -406,12 +459,12 @@ export default function App() {
   const hlCx3L = useMemo(()=> makeHLCx3(lHitsCX3), [lHitsCX3]);
   const hlCx3R = useMemo(()=> makeHLCx3(rHitsCX3), [rHitsCX3]);
 
-  // ===== 可視列（検索結果でヒット列のみ表示） =====
+  // ===== 可視列 =====
   const visiblePosFromCx3Hits = (hits: Cx3Hit[], rowIdx: Set<number>): number[] => {
     const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdx.has(c));
     const s = new Set<number>();
     for (const h of hits) {
-      const pos = dataCols.indexOf(h.col) + 1; // ①〜⑫ の位置
+      const pos = dataCols.indexOf(h.col) + 1;
       if (pos > 0) s.add(pos);
     }
     return [...s].sort((a,b)=>a-b);
@@ -427,26 +480,22 @@ export default function App() {
   const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
   const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
-  // ヒット位置から、押した方向に沿って LR / P★ の最短を最大4件返す
+  // 候補
   type Candidate = { code:string; name:string; dist:number; color:string; badge:"LR"|"LR★" };
-
   const buildLinesForHit = (hit: Cx3Hit): Candidate[] => {
     const col = hit.col;
     const start = hit.row;
-
     const rowMap = new Map<number, PositionRow>(cx3Pos.map(r => [r.no, r]));
     const allNos = cx3Pos.map(r => r.no);
     const maxRowNo = allNos.length ? Math.max(...allNos) : 0;
     const minRowNo = allNos.length ? Math.min(...allNos) : 1;
 
     const firstDist = new Map<string, number>();
-
     if (hit.dir === "down") {
       for (let rr = start + 1; rr <= maxRowNo; rr++) {
         const row = rowMap.get(rr);
         const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
         if (!Array.isArray(tokens) || tokens.length === 0) continue;
-
         for (const raw of tokens) {
           const t = String(raw).toUpperCase();
           const rar = getRarityByTokenStrict(t) || "";
@@ -460,7 +509,6 @@ export default function App() {
         const row = rowMap.get(rr);
         const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
         if (!Array.isArray(tokens) || tokens.length === 0) continue;
-
         for (const raw of tokens) {
           const t = String(raw).toUpperCase();
           const rar = getRarityByTokenStrict(t) || "";
@@ -476,29 +524,23 @@ export default function App() {
       const isPurple = SPECIAL_P.has(t);
       const name = getNameByTokenStrict(t) || t;
       items.push({
-        code: t,
-        name,
-        dist,
+        code: t, name, dist,
         color: isPurple ? "#B388FF" : "#EF4444",
         badge: isPurple ? "LR★" : "LR",
       });
     });
-
     return items.sort((a,b) => a.dist - b.dist).slice(0, MAX_LR_CANDIDATES);
   };
 
-  /* ===== ホーム候補（検索結果と同じ表示仕様：最短距離優先で4件） ===== */
+  /* ===== Home 用候補（ルピ付き） ===== */
   type Sug = {
     col: number; row: number;
-    lines?: Candidate[];
+    lines?: ReturnType<typeof buildLinesForHit>;
     noHigh?: boolean; nextAny?: number;
   };
-
   const buildSuggestions = (pat: number[], direction: "down" | "up" = "down"): Sug[] => {
     if (!isCx3("CX3") || !cx3Pos.length || !pat.length) return [];
-
     const hits = buildCx3Hits(cx3Pos, pat, rowIndexCols, direction);
-
     const prepared = hits.map(h => {
       const lines = buildLinesForHit(h);
       const score = lines.length ? Math.min(...lines.map(x => x.dist)) : Number.POSITIVE_INFINITY;
@@ -535,7 +577,29 @@ export default function App() {
     [rightSet, patRNow, cx3Pos, rowIndexCols, cx3KeyRarity, cx3KeyName]
   );
 
-  /* ========= UI ========= */
+  /* ====== ルピ算出 ====== */
+  const minLoopsFromHits = (hits:any[], cx3:boolean): number | null => {
+    if (!hits?.length) return null;
+    if (cx3) {
+      const arr:number[] = [];
+      for (const h of hits) {
+        const lines = buildLinesForHit(h);
+        if (lines?.length) arr.push(Math.min(...lines.map(l=>l.dist)));
+      }
+      if (!arr.length) return null;
+      return Math.min(...arr);
+    }
+    const arr = hits.map(h=>h?.nextLRSteps).filter((n:number)=>typeof n==="number" && n>=0);
+    return arr.length ? Math.min(...arr) : null;
+  };
+  const loopsL = useMemo(()=> minLoopsFromHits(isCx3(leftSet)? lHitsCX3 : lHitsGL, isCx3(leftSet)), [leftSet,lHitsCX3,lHitsGL]);
+  const loopsR = useMemo(()=> minLoopsFromHits(isCx3(rightSet)? rHitsCX3 : rHitsGL, isCx3(rightSet)), [rightSet,rHitsCX3,rHitsGL]);
+
+  /* ====== モーダル状態 ====== */
+  const [saveModal, setSaveModal] = useState<{open:boolean; side:"L"|"R"|null; editId?:string|null}>({open:false, side:null, editId:null});
+  const [listModal, setListModal] = useState<{open:boolean; side:"L"|"R"|null}>({open:false, side:null});
+  const [savedVersion, setSavedVersion] = useState(0); // 保存変更トリガー
+
   return (
     <main className="app">
       <header className="header">
@@ -573,9 +637,12 @@ export default function App() {
             </div>
 
             {!!candLDigits.length && (
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6 }}>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
                 {candLDigits.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
               </div>
+            )}
+            {candLDigits.length>0 && candSugL.length===0 && (
+              <div style={{ textAlign:"center", color:"#6b7280", fontSize:13, marginTop:4 }}>一致するパターンはありません。</div>
             )}
 
             {!!candSugL.length && (
@@ -654,9 +721,12 @@ export default function App() {
             </div>
 
             {!!candRDigits.length && (
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6 }}>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
                 {candRDigits.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
               </div>
+            )}
+            {candRDigits.length>0 && candSugR.length===0 && (
+              <div style={{ textAlign:"center", color:"#6b7280", fontSize:13, marginTop:4 }}>一致するパターンはありません。</div>
             )}
 
             {!!candSugR.length && (
@@ -714,7 +784,18 @@ export default function App() {
           <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
             <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
             <strong>左シリンダー結果</strong>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
+              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"L"})}>保存一覧</button>
+            </div>
           </div>
+
+          {!!lQuery.length && (
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
+              {lQuery.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
+              {loopsL!=null && <span className="pill" style={{background:"#10b981",borderColor:"#a7f3d0"}}>最短 {loopsL}</span>}
+            </div>
+          )}
 
           <ResultList
             hits={(isCx3(leftSet) ? lHitsCX3 : lHitsGL) as any}
@@ -748,7 +829,18 @@ export default function App() {
           <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
             <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
             <strong>右シリンダー結果</strong>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
+              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"R"})}>保存一覧</button>
+            </div>
           </div>
+
+          {!!rQuery.length && (
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
+              {rQuery.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
+              {loopsR!=null && <span className="pill" style={{background:"#10b981",borderColor:"#a7f3d0"}}>最短 {loopsR}</span>}
+            </div>
+          )}
 
           <ResultList
             hits={(isCx3(rightSet) ? rHitsCX3 : rHitsGL) as any}
@@ -775,6 +867,38 @@ export default function App() {
             }
           </div>
         </section>
+      )}
+
+      {/* 追加：保存一覧モーダル */}
+      {listModal.open && listModal.side && (
+        <SavedListModal
+          side={listModal.side}
+          setKey={listModal.side==="L" ? leftSet : rightSet}
+          version={savedVersion}
+          onClose={()=>setListModal({open:false, side:null})}
+          onEdit={(id)=>{ setSaveModal({open:true, side:listModal.side, editId:id}); }}
+          onDelete={(id)=>{ removeSavedEntry(listModal.side!, listModal.side==="L"?leftSet:rightSet, id); setSavedVersion(v=>v+1); }}
+          onApply={(pat)=>{
+            if (listModal.side==="L") {
+              setCandLDigits(pat); setLQuery(pat); setDirL("down"); nav("leftResults");
+            } else {
+              setCandRDigits(pat); setRQuery(pat); setDirR("down"); nav("rightResults");
+            }
+            setListModal({open:false, side:null});
+          }}
+        />
+      )}
+
+      {/* 追加：保存/編集モーダル（新規 or 既存を編集） */}
+      {saveModal.open && saveModal.side && (
+        <SaveMemoModal
+          side={saveModal.side}
+          setKey={saveModal.side==="L" ? leftSet : rightSet}
+          pattern={saveModal.side==="L" ? lQuery : rQuery}
+          editId={saveModal.editId ?? undefined}
+          onSaved={()=>setSavedVersion(v=>v+1)}
+          onClose={()=>setSaveModal({open:false, side:null, editId:null})}
+        />
       )}
 
       <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
@@ -817,7 +941,7 @@ function HistoryPanel({ items, onRestore, onDelete, onClear }:{
   );
 }
 
-/* ===== 読みやすさ強化版 ResultList（早い順ソート） ===== */
+/* ===== 結果リスト ===== */
 function ResultList({ hits, getLines }:{
   hits: any[],
   getLines?: (hit:any)=>Array<{code:string; name:string; dist:number; badge:"LR"|"LR★"}>
@@ -945,19 +1069,31 @@ function GridCx3({
   visibleCols?: number[],
 }) {
   const rows = [...positions].sort((a,b)=>a.no-b.no);
-
-  // 見出し①〜⑫の位置フィルタ（未指定なら全表示）
   const circFilter = new Set(visibleCols ?? []);
   const useFilter = circFilter.size > 0;
-
-  // データ列（rowIndexでない列）を①〜⑫の位置に詰める
   const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
   const dataCols = allCols.filter(c => !rowIndexCols?.has?.(c));
   const viewCols = Array.from({ length: 12 }, (_, i) => dataCols[i] ?? null);
-
-  // ヒットが1列だけのときは“名”列を追加
   const singlePos = useFilter && visibleCols && visibleCols.length === 1 ? visibleCols[0] : null;
-  const singleColIdx = singlePos ? viewCols[singlePos - 1] : null;
+
+  const renderTokenLine = (raw: string) => {
+    const key   = toHalf(String(raw)).toUpperCase();
+    const name  = getNameForKey?.(key) || "";
+    const rarRaw = (getRarityForKey?.(key) || "").toUpperCase();
+    const isP   = SPECIAL_P.has(key);
+    const label = isP ? "LR★" : (rarRaw || "N");
+    const bg = isP ? "#B388FF" : (label === "N" ? "#FFFFFF" : colorForRarity(label));
+    const fg = bg === "#FFFFFF" ? "#111" : "#fff";
+    const text = `${raw} [${label}]${name ? ` ${name}` : ""}`;
+
+    return (
+      <div title={text}
+        style={{ display:"block", width:"100%", boxSizing:"border-box", background:bg, color:fg,
+                 border:"1px solid rgba(0,0,0,0.10)", borderRadius:4, padding:"2px 6px" }}>
+        {text}
+      </div>
+    );
+  };
 
   return (
     <div className="grid-wrap">
@@ -970,14 +1106,12 @@ function GridCx3({
               if (useFilter && !circFilter.has(pos)) return null;
               return <th key={i}>{circledCol(pos)}</th>;
             })}
-            {singlePos && <th key="__names">名</th>}
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
             <tr key={r.no}>
               <td className="rowhead">{r.no}</td>
-
               {viewCols.map((colIdx, i) => {
                 const pos = i + 1;
                 if (useFilter && !circFilter.has(pos)) return null;
@@ -988,6 +1122,22 @@ function GridCx3({
                 const token = vals[0];
                 const rarKey = isMono ? getRarityForKey(token!) : undefined;
                 const isHL = colIdx ? highlight?.has?.(`${colIdx}:${r.no}`) : false;
+
+                if (singlePos && pos === singlePos) {
+                  return (
+                    <td key={i} className="cell"
+                      style={{ background:"#FFFFFF", padding:2, fontSize:12, lineHeight:1.25,
+                               verticalAlign:"middle", boxShadow: isHL ? "inset 0 0 0 3px #ef4444" : undefined,
+                               textAlign:"left" }}
+                      title={vals.join(" / ")}>
+                      {vals.length === 0 ? "" : (
+                        <div style={{ display:"grid", gap:2 }}>
+                          {vals.map((raw, idx) => <div key={idx}>{renderTokenLine(raw)}</div>)}
+                        </div>
+                      )}
+                    </td>
+                  );
+                }
 
                 const monoBg = ((): string => {
                   if (!isMono) return "#FFFFFF";
@@ -1000,9 +1150,12 @@ function GridCx3({
 
                 const baseStyle: React.CSSProperties = {
                   background: monoBg,
-                  padding: 2, fontSize: isMono ? 12 : 10,
-                  lineHeight: 1.15, verticalAlign: "middle",
-                  whiteSpace: "normal", wordBreak: "break-all",
+                  padding: 2,
+                  fontSize: isMono ? 12 : 10,
+                  lineHeight: 1.15,
+                  verticalAlign: "middle",
+                  whiteSpace: "normal",
+                  wordBreak: "break-all",
                   boxShadow: isHL ? "inset 0 0 0 3px #ef4444" : undefined
                 };
 
@@ -1011,23 +1164,19 @@ function GridCx3({
                     {isMono ? (
                       token ?? ""
                     ) : (
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:2, justifyContent:"center", background:"#FFFFFF" }}>
-                        {vals.map((k,idx)=>{
+                      <div style={{ display:"grid", gap:2, background:"#FFFFFF", justifyItems:"stretch" }}>
+                        {vals.map((k, idx) => {
                           const t = toHalf(String(k)).toUpperCase();
                           const rarUpper = ((getRarityForKey(t) || "")).toUpperCase();
-                          const bg =
-                            SPECIAL_P.has(t) ? "#B388FF" :
-                            (!rarUpper || rarUpper==="N") ? "#FFFFFF" :
-                            colorForRarity(rarUpper);
+                          const bg = SPECIAL_P.has(t) ? "#B388FF" :
+                                     (!rarUpper || rarUpper === "N") ? "#FFFFFF" : colorForRarity(rarUpper);
+                          const fg = bg === "#FFFFFF" ? "#111" : "#fff";
                           return (
-                            <span key={idx}
-                              style={{
-                                display:"inline-block", padding:"0 2px", borderRadius:3,
-                                fontSize:10, lineHeight:1.2, background:bg,
-                                border:"1px solid rgba(0,0,0,0.06)"
-                              }}>
+                            <div key={idx}
+                              style={{ display:"block", padding:"0 2px", borderRadius:3, fontSize:10, lineHeight:1.3,
+                                       background:bg, color:fg, border:"1px solid rgba(0,0,0,0.06)", textAlign:"center" }}>
                               {k}
-                            </span>
+                            </div>
                           );
                         })}
                       </div>
@@ -1035,16 +1184,6 @@ function GridCx3({
                   </td>
                 );
               })}
-
-              {singleColIdx && (
-                <td className="cell" style={{ background:"#fff", padding:2, fontSize:11, lineHeight:1.2, textAlign:"left" }}>
-                  {(() => {
-                    const toks = ((r as any)[`raw${singleColIdx}`] as string[] | undefined) ?? [];
-                    const names = toks.map(k => getNameForKey(toHalf(String(k)).toUpperCase()) || k);
-                    return names.join(" / ");
-                  })()}
-                </td>
-              )}
             </tr>
           ))}
         </tbody>
@@ -1053,14 +1192,129 @@ function GridCx3({
   );
 }
 
-/* ========= 共通 util ========= */
+/* ========= 保存一覧モーダル ========= */
+function SavedListModal({
+  side, setKey, version, onClose, onApply, onEdit, onDelete
+}:{
+  side:"L"|"R"; setKey:string; version:number;
+  onClose:()=>void; onApply:(pattern:number[])=>void;
+  onEdit:(id:string)=>void; onDelete:(id:string)=>void;
+}) {
+  const [list, setList] = useState<SavedEntry[]>(()=>loadSavedList(side,setKey));
+  useEffect(()=>{ setList(loadSavedList(side,setKey)); }, [side,setKey,version]);
 
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={onClose}/>
+      <div className="modal-body" style={{ width: "min(660px, 94vw)" }}>
+        <div className="modal-head">
+          <div className="modal-title">保存一覧（{side==="L"?"左":"右"}シリンダー）</div>
+          <button className="modal-x" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-content" style={{ display:"grid", gap:8 }}>
+          {!list.length && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
+
+          {list.map(it=>(
+            <div key={it.id} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
+                <strong>{it.pattern.join(" ")}</strong>
+                <span style={{ marginLeft:"auto", fontSize:12, color:"#64748b" }}>{new Date(it.ts).toLocaleString("ja-JP")}</span>
+              </div>
+              {it.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{it.memo}</div>}
+              <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+                <button className="btn btn-blue" onClick={()=>onApply(it.pattern)}>適用</button>
+                <button className="btn btn-teal" onClick={()=>onEdit(it.id)}>編集</button>
+                <button className="btn btn-gray" onClick={()=>onDelete(it.id)}>削除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-gray" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= 保存/編集モーダル ========= */
+function SaveMemoModal({
+  side, setKey, pattern, editId, onSaved, onClose
+}:{ side:"L"|"R"; setKey:string; pattern:number[]; editId?:string; onSaved:()=>void; onClose:()=>void }) {
+  const isEdit = !!editId;
+  const title = `${isEdit?"履歴編集":"履歴保存"}（${side==="L"?"左":"右"}シリンダー）`;
+  const editing = isEdit ? (findSaved(side,setKey, editId!) || null) : null;
+
+  const [patternText, setPatternText] = useState<string>(() =>
+    isEdit ? (editing?.pattern ?? []).join(" ") : pattern.join(" ")
+  );
+  const [memo, setMemo] = useState<string>(() => isEdit ? (editing?.memo ?? "") : "");
+
+  const parsePattern = (s:string): number[] =>
+    s.split(/[,\s]+/).map(v=>v.trim()).filter(Boolean).map(v=>parseInt(v,10))
+      .filter(n=>Number.isFinite(n) && n>=0 && n<=999).slice(0, 20);
+
+  const saveNow = () => {
+    const pat = parsePattern(patternText);
+    if (!pat.length) return;
+    if (isEdit) updateSavedEntry(side,setKey, editId!, { pattern: pat, memo: memo.slice(0,128) });
+    else addSavedEntry(side,setKey, pat, memo);
+    onSaved();
+    onClose();
+  };
+  const delNow = () => {
+    if (isEdit) { removeSavedEntry(side,setKey, editId!); onSaved(); }
+    onClose();
+  };
+
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={onClose}/>
+      <div className="modal-body">
+        <div className="modal-head">
+          <div className="modal-title">{title}</div>
+          <button className="modal-x" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-content">
+          <input
+            value={patternText}
+            onChange={(e)=>setPatternText(
+              e.target.value.replace(/[^\d,\s]/g,"").replace(/\s+/g," ").trimStart()
+            )}
+            placeholder="例: 4 11（スペース/カンマ区切り）"
+            style={{ width:"100%", height:32, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6, marginBottom:8 }}
+          />
+
+          <textarea
+            value={memo}
+            onChange={(e)=>setMemo(e.target.value.slice(0,128))}
+            placeholder="（任意・128文字まで）"
+            rows={4}
+            style={{ width:"100%", boxSizing:"border-box", border:"1px solid #d1d5db", borderRadius:8, padding:"8px" }}
+          />
+        </div>
+
+        <div className="modal-actions">
+          <div style={{ marginRight:"auto" }}>
+            {isEdit && <button className="btn btn-gray" onClick={delNow}>削除</button>}
+          </div>
+          <button className="btn btn-gray" onClick={onClose}>閉じる</button>
+          <button className="btn btn-blue" onClick={saveNow} disabled={parsePattern(patternText).length===0}>{isEdit?"保存":"保存"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========= 共通 util ========= */
 function makeHLCx3(hits: Array<{col:number; row:number; matched:number[]; dir:"down"|"up"; matchedRows:number[]}>): Set<string> {
   const out = new Set<string>();
   for (const h of hits) for (const rr of h.matchedRows) if (rr > 0) out.add(`${h.col}:${rr}`);
   return out;
 }
-
 function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   const out = new Set<string>(); if (!hits?.length) return out;
   const cols = byCyl?.[cyl] || {};
@@ -1076,7 +1330,7 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
-/* ===== スタイル注入（重複防止） ===== */
+/* ===== スタイル注入 ===== */
 (function injectStyle(){
   const STYLE_ID = "legends-inline-style";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
@@ -1113,11 +1367,7 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
 .res-dist { opacity: .85; font-size: 14px; }
 .res-name { font-size: 15px; }
 
-.badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 6px; color: #fff;
-  font-weight: 700; font-size: 14px;
-}
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; color: #fff; font-weight: 700; font-size: 14px; }
 .badge-lr { background: #EF4444; }
 .badge-p  { background: #B388FF; }
 .res-empty { color: #666; margin-top: 8px; }
@@ -1129,9 +1379,30 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
 .btn-outline-blue:hover{ filter:brightness(0.95); }
 
 /* 並びとサイズ固定（履歴=検索と同サイズ） */
-.select-row{ display:flex; align-items:center; justify-content:flex-start !important; gap:8px !important; }
+.select-row{
+  display:flex; align-items:center; justify-content:flex-start !important; gap:8px !important;
+}
+.select-row > *{ margin:0 !important; }
+.select-row .btn{ margin-left:0 !important; }
 .select-row .btn-teal{
   height:28px !important; padding:0 12px !important; line-height:28px !important; border-radius:6px !important; margin-left:0 !important;
 }
+
+/* ---- モーダル ---- */
+.modal{ position: fixed; inset: 0; z-index: 999; }
+.modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
+.modal-body{
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(560px,92vw); background:#fff; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
+.modal-title{ font-size:18px; font-weight:700; }
+.modal-x{ margin-left:auto; background:transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
+.modal-content{ padding:12px 14px; }
+.modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
+
+/* 小バッジ（将来用） */
+.badge-mini{ display:inline-flex; align-items:center; height:16px; }
+.token-line .token-name{ fontサイズ:12px; }
 `;
 })();
