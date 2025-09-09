@@ -126,7 +126,7 @@ function findSaved(side:"L"|"R", setKey:string, id:string): SavedEntry | undefin
 
 /* ========= App ========= */
 export default function App() {
-  const { rows, sets, loading, error, reload } = useCsvData(CSV_URL);
+  const { rows, sets, loading, error } = useCsvData(CSV_URL);
   const rowsNorm = useMemo(() => rows.map(r => ({ ...r, set: String(r?.set ?? r?.series ?? r?.["シリーズ"] ?? r?.["弾"] ?? "").trim().toUpperCase() })), [rows]);
 
   const setOptions = useMemo(() => {
@@ -577,7 +577,7 @@ export default function App() {
     [rightSet, patRNow, cx3Pos, rowIndexCols, cx3KeyRarity, cx3KeyName]
   );
 
-  /* ====== ルピ算出 ====== */
+  /* ====== ルピ算出（表示はしない） ====== */
   const minLoopsFromHits = (hits:any[], cx3:boolean): number | null => {
     if (!hits?.length) return null;
     if (cx3) {
@@ -604,7 +604,6 @@ export default function App() {
     <main className="app">
       <header className="header">
         <h1>ガンバレジェンズ配列表 検索ツール</h1>
-        <div className="tools"><button onClick={reload}>再読込</button></div>
       </header>
 
       {route === "home" && (
@@ -619,7 +618,8 @@ export default function App() {
               </select>
               <button className="btn btn-pink" onClick={runSearchLRev}>逆順検索</button>
               <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchL}>検索</button>
-              <button className="btn btn-teal" onClick={()=>setOpenHistL(!openHistL)}>履歴</button>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
+              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"L"})}>履歴一覧</button>
             </div>
 
             <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"nowrap" }}>
@@ -638,7 +638,7 @@ export default function App() {
 
             {!!candLDigits.length && (
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
-                {candLDigits.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
+                {candLDigits.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
               </div>
             )}
             {candLDigits.length>0 && candSugL.length===0 && (
@@ -703,7 +703,8 @@ export default function App() {
               </select>
               <button className="btn btn-pink" onClick={runSearchRRev}>逆順検索</button>
               <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchR}>検索</button>
-              <button className="btn btn-teal" onClick={()=>setOpenHistR(!openHistR)}>履歴</button>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
+              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"R"})}>履歴一覧</button>
             </div>
 
             <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"nowrap" }}>
@@ -722,7 +723,7 @@ export default function App() {
 
             {!!candRDigits.length && (
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
-                {candRDigits.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
+                {candRDigits.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
               </div>
             )}
             {candRDigits.length>0 && candSugR.length===0 && (
@@ -792,8 +793,8 @@ export default function App() {
 
           {!!lQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
-              {lQuery.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
-              {loopsL!=null && <span className="pill" style={{background:"#10b981",borderColor:"#a7f3d0"}}>最短 {loopsL}</span>}
+              {lQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
+              {/* 緑の「最短 n」ピルは表示しない */}
             </div>
           )}
 
@@ -837,8 +838,8 @@ export default function App() {
 
           {!!rQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
-              {rQuery.map((n,i)=>(<span key={i} className="pill">{n}</span>))}
-              {loopsR!=null && <span className="pill" style={{background:"#10b981",borderColor:"#a7f3d0"}}>最短 {loopsR}</span>}
+              {rQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
+              {/* 緑の「最短 n」ピルは表示しない */}
             </div>
           )}
 
@@ -967,9 +968,7 @@ function ResultList({ hits, getLines }:{
 
   return (
     <div className="res-list">
-      <p className="res-summary">
-        <strong className="res-count">{top.length}</strong>件の最短パターンと一致しました。
-      </p>
+      <p className="res-summary">{top.length} 件の最短パターンと一致しました。</p>
 
       {top.map(({h, lines}, i) => (
         <div key={i} className="res-card">
@@ -1338,9 +1337,33 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   el.textContent = `
 .pill{
   display:inline-flex;align-items:center;justify-content:center;gap:.4em;
-  padding:.2em .6em;border-radius:999px;background:#2EC5FF;color:#fff;
-  border:1px solid #9BDCF9;font-size:12px;font-weight:700;
+  min-width:28px; height:28px; padding:0 .8em;
+  border-radius:999px; background:#2EC5FF; color:#fff;
+  border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1;
 }
+/* 水色の番号ピル：真円＆中央 */
+.pill.pill-num{
+  width:34px !important;          /* 大きさはお好みで 32〜36px */
+  height:34px !important;
+  padding:0 !important;           /* 横paddingで楕円化しない */
+  border-radius:50% !important;   /* 真円 */
+  box-sizing:border-box !important;
+
+  /* テキストを完全中央に配置（フォント差の影響を受けにくい） */
+  display:grid !important;
+  place-items:center !important;
+  line-height:1 !important;
+
+  font-size:22px;                 /* 数字を少し大きく */
+  font-weight:700;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+
+  /* もし以前に入っていた補正を打ち消す */
+  transform:none !important;
+}
+
+
 .pill .muted{ color:rgba(255,255,255,.9); }
 .tag{margin-left:.5em;padding:.1em .4em;border-radius:6px;font-size:11px;border:1px solid rgba(0,0,0,.08)}
 .tag-lr{background:#ffd9d9}
@@ -1350,7 +1373,6 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
 
 .res-list { display: grid; gap: 10px; margin-top: 8px; }
 .res-summary { margin: 0; font-size: 14px; }
-.res-count { color: crimson; }
 
 .res-card {
   background: #f7fbff;
