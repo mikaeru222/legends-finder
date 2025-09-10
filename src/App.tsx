@@ -83,7 +83,6 @@ function loadSavedList(side:"L"|"R", setKey:string): SavedEntry[] {
   try{
     const raw = localStorage.getItem(listKey(side,setKey));
     if (raw) return (JSON.parse(raw) as SavedEntry[]).filter(x=>Array.isArray(x.pattern));
-    // 単一保存があれば1件として取り込む（1度だけ）
     const m = localStorage.getItem(legacyKey(side,setKey));
     if (m) {
       const old = JSON.parse(m) as LegacySaved;
@@ -248,7 +247,6 @@ export default function App() {
     const mSuf = u.match(/(\d{1,3}P?)$/);
     if (mSuf) {
       const suf = mSuf[1];
-      keys.add(suf);
       const m = suf.match(/^(\d+)(P)?$/);
       if (m) {
         const n  = String(parseInt(m[1],10));
@@ -600,6 +598,18 @@ export default function App() {
   const [listModal, setListModal] = useState<{open:boolean; side:"L"|"R"|null}>({open:false, side:null});
   const [savedVersion, setSavedVersion] = useState(0); // 保存変更トリガー
 
+  // ★ ここに追加（return の直前）
+  const currentPatternFor = (side: "L" | "R"): number[] => {
+    const digits = side === "L" ? candLDigits : candRDigits;
+    const buf = (side === "L" ? candLInput : candRInput).trim();
+
+    const tmp = [...digits];
+    if (/^\d{1,3}$/.test(buf)) tmp.push(parseInt(buf, 10));
+
+    const q = side === "L" ? lQuery : rQuery; // 何も無ければ直近検索
+    return tmp.length ? tmp : q;
+  };
+
   return (
     <main className="app">
       <header className="header">
@@ -612,17 +622,16 @@ export default function App() {
           <section className="card">
             <div className="section-title">左シリンダー</div>
 
-            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-              <select value={leftSet} onChange={e=>{ setLeftSet(e.target.value); setOpenHistL(false); }}>
-                {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <button className="btn btn-pink" onClick={runSearchLRev}>逆順検索</button>
-              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchL}>検索</button>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
-              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"L"})}>履歴一覧</button>
-            </div>
+            {/* 1行目（中央揃え） */}
+            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+              <div className="select-wrap">
+                <select value={leftSet} onChange={e=>{ setLeftSet(e.target.value); setOpenHistL(false); }}>
+                  {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"nowrap" }}>
               <input
                 value={candLInput}
                 onChange={onCandChange("L")}
@@ -630,10 +639,23 @@ export default function App() {
                 onBlur={onCandBlur("L")}
                 placeholder="番号"
                 inputMode="numeric"
-                style={{ width:100, height:28, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6, fontSize:16 }}
+                style={{ width:56, textAlign:"center" }}
               />
+
+              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchL}>検索</button>
+              <button className="btn btn-pink" onClick={runSearchLRev}>逆順</button>
+            </div>
+
+            {/* 2行目：一つ前へ戻る / クリア（中央） */}
+            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap", justifyContent:"center" }}>
               <button className="btn-outline-blue" onClick={undoOneL}>一つ前へ戻る</button>
               <button className="btn btn-gray" onClick={clearL}>クリア</button>
+            </div>
+
+            {/* 3行目：履歴保存 / 履歴一覧（中央） */}
+            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"wrap", justifyContent:"center" }}>
+              <button className="btn btn-orange" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
+              <button className="btn btn-violet" onClick={()=>setListModal({open:true, side:"L"})}>履歴一覧</button>
             </div>
 
             {!!candLDigits.length && (
@@ -641,8 +663,8 @@ export default function App() {
                 {candLDigits.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
               </div>
             )}
-            {candLDigits.length>0 && candSugL.length===0 && (
-              <div style={{ textAlign:"center", color:"#6b7280", fontSize:13, marginTop:4 }}>一致するパターンはありません。</div>
+            {candLDigits.length > 0 && candSugL.length === 0 && (
+              <div className="nohits">一致するパターンはありません。</div>
             )}
 
             {!!candSugL.length && (
@@ -697,17 +719,16 @@ export default function App() {
           <section className="card">
             <div className="section-title">右シリンダー</div>
 
-            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-              <select value={rightSet} onChange={e=>{ setRightSet(e.target.value); setOpenHistR(false); }}>
-                {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <button className="btn btn-pink" onClick={runSearchRRev}>逆順検索</button>
-              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchR}>検索</button>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
-              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"R"})}>履歴一覧</button>
-            </div>
+            {/* 1行目（中央揃え） */}
+            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+              <div className="select-wrap">
+                <select value={rightSet} onChange={e=>{ setRightSet(e.target.value); setOpenHistR(false); }}>
+                  {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"nowrap" }}>
               <input
                 value={candRInput}
                 onChange={onCandChange("R")}
@@ -715,10 +736,23 @@ export default function App() {
                 onBlur={onCandBlur("R")}
                 placeholder="番号"
                 inputMode="numeric"
-                style={{ width:100, height:28, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6, fontSize:16 }}
+                style={{ width:56, textAlign:"center" }}
               />
+
+              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchR}>検索</button>
+              <button className="btn btn-pink" onClick={runSearchRRev}>逆順</button>
+            </div>
+
+            {/* 2行目：一つ前へ戻る / クリア（中央） */}
+            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap", justifyContent:"center" }}>
               <button className="btn-outline-blue" onClick={undoOneR}>一つ前へ戻る</button>
               <button className="btn btn-gray" onClick={clearR}>クリア</button>
+            </div>
+
+            {/* 3行目：履歴保存 / 履歴一覧（中央） */}
+            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"wrap", justifyContent:"center" }}>
+              <button className="btn btn-orange" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
+              <button className="btn btn-violet" onClick={()=>setListModal({open:true, side:"R"})}>履歴一覧</button>
             </div>
 
             {!!candRDigits.length && (
@@ -727,7 +761,7 @@ export default function App() {
               </div>
             )}
             {candRDigits.length>0 && candSugR.length===0 && (
-              <div style={{ textAlign:"center", color:"#6b7280", fontSize:13, marginTop:4 }}>一致するパターンはありません。</div>
+              <div className="nohits">一致するパターンはありません。</div>
             )}
 
             {!!candSugR.length && (
@@ -794,7 +828,6 @@ export default function App() {
           {!!lQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
               {lQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
-              {/* 緑の「最短 n」ピルは表示しない */}
             </div>
           )}
 
@@ -839,7 +872,6 @@ export default function App() {
           {!!rQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
               {rQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
-              {/* 緑の「最短 n」ピルは表示しない */}
             </div>
           )}
 
@@ -895,7 +927,7 @@ export default function App() {
         <SaveMemoModal
           side={saveModal.side}
           setKey={saveModal.side==="L" ? leftSet : rightSet}
-          pattern={saveModal.side==="L" ? lQuery : rQuery}
+          pattern={saveModal.side==="L" ? currentPatternFor("L") : currentPatternFor("R")}
           editId={saveModal.editId ?? undefined}
           onSaved={()=>setSavedVersion(v=>v+1)}
           onClose={()=>setSaveModal({open:false, side:null, editId:null})}
@@ -1335,86 +1367,103 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
   el.textContent = `
+:root{ --ctrl-h: 30px; } /* ← 高さはここだけで調整（例: 28 / 30） */
+
 .pill{
   display:inline-flex;align-items:center;justify-content:center;gap:.4em;
   min-width:28px; height:28px; padding:0 .8em;
   border-radius:999px; background:#2EC5FF; color:#fff;
   border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1;
 }
-/* 水色の番号ピル：真円＆中央 */
 .pill.pill-num{
-  width:34px !important;          /* 大きさはお好みで 32〜36px */
-  height:34px !important;
-  padding:0 !important;           /* 横paddingで楕円化しない */
-  border-radius:50% !important;   /* 真円 */
-  box-sizing:border-box !important;
-
-  /* テキストを完全中央に配置（フォント差の影響を受けにくい） */
-  display:grid !important;
-  place-items:center !important;
-  line-height:1 !important;
-
-  font-size:22px;                 /* 数字を少し大きく */
-  font-weight:700;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1, "lnum" 1;
-
-  /* もし以前に入っていた補正を打ち消す */
-  transform:none !important;
+  width:34px !important; height:34px !important; padding:0 !important; border-radius:50% !important;
+  box-sizing:border-box !important; display:grid !important; place-items:center !important;
+  line-height:1 !important; font-size:22px; font-weight:700;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
-
-.pill .muted{ color:rgba(255,255,255,.9); }
-.tag{margin-left:.5em;padding:.1em .4em;border-radius:6px;font-size:11px;border:1px solid rgba(0,0,0,.08)}
-.tag-lr{background:#ffd9d9}
-.tag-p{background:#e2d4ff}
-
-.hint{display:none;font-size:12px;color:#6b7280}
-
+/* ヒット結果 */
 .res-list { display: grid; gap: 10px; margin-top: 8px; }
 .res-summary { margin: 0; font-size: 14px; }
-
-.res-card {
-  background: #f7fbff;
-  border: 1px solid #dfeefe;
-  border-radius: 12px;
-  padding: 10px;
-}
+.res-card { background: #f7fbff; border: 1px solid #dfeefe; border-radius: 12px; padding: 10px; }
 .res-head { display: flex; gap: 8px; align-items: baseline; }
 .res-head .pos { font-weight: 700; }
 .res-head .meta { margin-left: auto; font-size: 12px; color: #6b7280; }
-
 .res-lines { display: grid; gap: 6px; margin-top: 6px; }
 .res-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; line-height: 1.35; }
 .res-dist { opacity: .85; font-size: 14px; }
 .res-name { font-size: 15px; }
-
 .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; color: #fff; font-weight: 700; font-size: 14px; }
 .badge-lr { background: #EF4444; }
 .badge-p  { background: #B388FF; }
 .res-empty { color: #666; margin-top: 8px; }
 
+/* 「一致するパターンはありません。」の赤表示 */
+.nohits{
+  text-align:center;
+  color:#EF4444;
+  font-size:13px;
+  font-weight:700;
+  margin-top:4px;
+}
+
+/* アウトライン青ボタン */
 .btn-outline-blue{
   background:#fff; color:#1677FF; border:2px solid #1677FF;
-  font-weight:700; padding:6px 14px; border-radius:10px; height:32px; line-height:1; cursor:pointer;
+  font-weight:700; padding:0 12px; border-radius:6px;
+  height:var(--ctrl-h); line-height:var(--ctrl-h); cursor:pointer;
 }
 .btn-outline-blue:hover{ filter:brightness(0.95); }
 
-/* 並びとサイズ固定（履歴=検索と同サイズ） */
-.select-row{
-  display:flex; align-items:center; justify-content:flex-start !important; gap:8px !important;
-}
+/* ---- 行レイアウト（高さ統一） ---- */
+.select-row{ display:flex; align-items:center; gap:8px; }
 .select-row > *{ margin:0 !important; }
-.select-row .btn{ margin-left:0 !important; }
-.select-row .btn-teal{
-  height:28px !important; padding:0 12px !important; line-height:28px !important; border-radius:6px !important; margin-left:0 !important;
+.select-row .btn{
+  height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important; padding:0 10px !important; border-radius:6px !important;
 }
+
+/* ▼ セレクト：常に表示されるカスタム矢印（はみ出し防止） */
+.select-wrap{
+  position:relative; display:inline-flex; align-items:center;
+  height:var(--ctrl-h); border:1px solid #d1d5db; border-radius:6px;
+  background:#fff; overflow:hidden;
+}
+.select-wrap::after{
+  content:"";
+  position:absolute; pointer-events:none;
+  right:8px; top:50%; transform:translateY(-35%);
+  width:0; height:0;
+  border-left:6px solid transparent;
+  border-right:6px solid transparent;
+  border-top:7px solid #55667a; /* ▼ の色 */
+}
+.select-wrap select{
+  height:var(--ctrl-h); line-height:normal;        /* テキスト欠け防止 */
+  padding:0 28px 0 8px;                           /* 矢印分の余白 */
+  border:0; background:transparent; font-size:14px;
+  min-width:62px; max-width:84px; width:auto;
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+}
+select::-ms-expand{ display:none; } /* 旧Edge/IE対策 */
+
+.select-row input{
+  height:var(--ctrl-h); line-height:calc(var(--ctrl-h) - 2px);
+  padding:0 8px; border:1px solid #d1d5db; border-radius:6px; font-size:14px;
+  width:56px; text-align:center;
+}
+
+/* 優しめカラーの履歴ボタン */
+.btn-orange{ background:#FDE68A; border:1px solid #FBBF24; color:#111; cursor:pointer; }
+.btn-orange:hover{ filter:brightness(0.98); }
+.btn-violet{ background:#DDD6FE; border:1px solid #C4B5FD; color:#111; cursor:pointer; }
+.btn-violet:hover{ filter:brightness(0.98); }
 
 /* ---- モーダル ---- */
 .modal{ position: fixed; inset: 0; z-index: 999; }
 .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
 .modal-body{
-  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
   width:min(560px,92vw); background:#fff; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
 }
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
@@ -1425,6 +1474,6 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
 
 /* 小バッジ（将来用） */
 .badge-mini{ display:inline-flex; align-items:center; height:16px; }
-.token-line .token-name{ fontサイズ:12px; }
+.token-line .token-name{ font-size:12px; }
 `;
 })();
