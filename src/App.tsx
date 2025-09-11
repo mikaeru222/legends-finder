@@ -7,6 +7,9 @@ import { useSearchHistory, type HistoryItem } from "./hooks/useSearchHistory";
 import { loadCards as loadCx3Cards, loadPositions, type PositionRow, SPECIAL_P } from "./lib/cx3";
 import { colorForRarity, toHalf } from "./lib/rarity";
 
+/** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
+const SEL_FIXED_PX = 86;
+
 /* ========= ユーティリティ ========= */
 const abs = (path: string) => {
   try {
@@ -620,12 +623,29 @@ export default function App() {
         <>
           {/* 左 */}
           <section className="card">
-            <div className="section-title">左シリンダー</div>
+            {/* タイトル + 右上に履歴一覧（保存はホームでは非表示） */}
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <div className="section-title" style={{ margin:0 }}>左シリンダー</div>
+              <button
+                className="btn btn-violet"
+                style={{ marginLeft:"auto" }}
+                onClick={()=>setListModal({open:true, side:"L"})}
+              >
+                履歴一覧
+              </button>
+            </div>
 
             {/* 1行目（中央揃え） */}
-            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+            <div
+              className="select-row"
+              style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
+            >
               <div className="select-wrap">
-                <select value={leftSet} onChange={e=>{ setLeftSet(e.target.value); setOpenHistL(false); }}>
+                <select
+                  value={leftSet}
+                  onChange={(e) => { setLeftSet(e.target.value); setOpenHistL(false); }}
+                  style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
+                >
                   {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -639,10 +659,10 @@ export default function App() {
                 onBlur={onCandBlur("L")}
                 placeholder="番号"
                 inputMode="numeric"
-                style={{ width:56, textAlign:"center" }}
+                style={{ width: 56, textAlign: "center" }}
               />
 
-              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchL}>検索</button>
+              <button className="btn btn-blue" style={{ background: SEARCH_BLUE, borderColor: SEARCH_BLUE }} onClick={runSearchL}>検索</button>
               <button className="btn btn-pink" onClick={runSearchLRev}>逆順</button>
             </div>
 
@@ -652,11 +672,7 @@ export default function App() {
               <button className="btn btn-gray" onClick={clearL}>クリア</button>
             </div>
 
-            {/* 3行目：履歴保存 / 履歴一覧（中央） */}
-            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"wrap", justifyContent:"center" }}>
-              <button className="btn btn-orange" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
-              <button className="btn btn-violet" onClick={()=>setListModal({open:true, side:"L"})}>履歴一覧</button>
-            </div>
+            {/* ※ ホームでは「履歴保存」行を削除 */}
 
             {!!candLDigits.length && (
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
@@ -717,12 +733,29 @@ export default function App() {
 
           {/* 右 */}
           <section className="card">
-            <div className="section-title">右シリンダー</div>
+            {/* タイトル + 右上に履歴一覧（保存はホームでは非表示） */}
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <div className="section-title" style={{ margin:0 }}>右シリンダー</div>
+              <button
+                className="btn btn-violet"
+                style={{ marginLeft:"auto" }}
+                onClick={()=>setListModal({open:true, side:"R"})}
+              >
+                履歴一覧
+              </button>
+            </div>
 
             {/* 1行目（中央揃え） */}
-            <div className="select-row" style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+            <div
+              className="select-row"
+              style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
+            >
               <div className="select-wrap">
-                <select value={rightSet} onChange={e=>{ setRightSet(e.target.value); setOpenHistR(false); }}>
+                <select
+                  value={rightSet}
+                  onChange={(e) => { setRightSet(e.target.value); setOpenHistR(false); }}
+                  style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
+                >
                   {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -736,10 +769,10 @@ export default function App() {
                 onBlur={onCandBlur("R")}
                 placeholder="番号"
                 inputMode="numeric"
-                style={{ width:56, textAlign:"center" }}
+                style={{ width: 56, textAlign: "center" }}
               />
 
-              <button className="btn btn-blue" style={{background:SEARCH_BLUE,borderColor:SEARCH_BLUE}} onClick={runSearchR}>検索</button>
+              <button className="btn btn-blue" style={{ background: SEARCH_BLUE, borderColor: SEARCH_BLUE }} onClick={runSearchR}>検索</button>
               <button className="btn btn-pink" onClick={runSearchRRev}>逆順</button>
             </div>
 
@@ -749,11 +782,7 @@ export default function App() {
               <button className="btn btn-gray" onClick={clearR}>クリア</button>
             </div>
 
-            {/* 3行目：履歴保存 / 履歴一覧（中央） */}
-            <div className="select-row center-row" style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, marginBottom:6, flexWrap:"wrap", justifyContent:"center" }}>
-              <button className="btn btn-orange" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
-              <button className="btn btn-violet" onClick={()=>setListModal({open:true, side:"R"})}>履歴一覧</button>
-            </div>
+            {/* ※ ホームでは「履歴保存」行を削除 */}
 
             {!!candRDigits.length && (
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6, justifyContent:"center" }}>
@@ -1319,7 +1348,7 @@ function SaveMemoModal({
             style={{ width:"100%", height:32, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6, marginBottom:8 }}
           />
 
-          <textarea
+        <textarea
             value={memo}
             onChange={(e)=>setMemo(e.target.value.slice(0,128))}
             placeholder="（任意・128文字まで）"
@@ -1361,14 +1390,27 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
-/* ===== スタイル注入 ===== */
+/* ===== スタイル注入（v3：枠は見やすく、CX3幅は強制） ===== */
 (function injectStyle(){
-  const STYLE_ID = "legends-inline-style";
+  const STYLE_ID = "legends-inline-style-v3";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
-  el.textContent = `
-:root{ --ctrl-h: 30px; } /* ← 高さはここだけで調整（例: 28 / 30） */
 
+  el.textContent = `
+:root{
+  --ctrl-h: 34px !important;        /* ← 枠の高さを少し戻して見やすく */
+  --btn-minw: 84px !important;
+  --sel-minw: 56px !important;      /* 参考値（実寸は下で固定） */
+  --btn-padx: 10px !important;
+  --sel-padL: 8px !important;
+  --sel-padR: 22px !important;
+  --radius-ctrl: 6px !important;
+  --radius-card: 10px !important;
+  --radius-modal: 10px !important;
+  --radius-badge: 4px !important;
+}
+
+/* ==== pill ==== */
 .pill{
   display:inline-flex;align-items:center;justify-content:center;gap:.4em;
   min-width:28px; height:28px; padding:0 .8em;
@@ -1382,10 +1424,10 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
-/* ヒット結果 */
+/* ==== 結果カード ==== */
 .res-list { display: grid; gap: 10px; margin-top: 8px; }
 .res-summary { margin: 0; font-size: 14px; }
-.res-card { background: #f7fbff; border: 1px solid #dfeefe; border-radius: 12px; padding: 10px; }
+.res-card { background: #f7fbff; border: 1px solid #dfeefe; border-radius: var(--radius-card); padding: 10px; }
 .res-head { display: flex; gap: 8px; align-items: baseline; }
 .res-head .pos { font-weight: 700; }
 .res-head .meta { margin-left: auto; font-size: 12px; color: #6b7280; }
@@ -1393,78 +1435,78 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
 .res-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; line-height: 1.35; }
 .res-dist { opacity: .85; font-size: 14px; }
 .res-name { font-size: 15px; }
-.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; color: #fff; font-weight: 700; font-size: 14px; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-badge); color: #fff; font-weight: 700; font-size: 14px; }
 .badge-lr { background: #EF4444; }
 .badge-p  { background: #B388FF; }
 .res-empty { color: #666; margin-top: 8px; }
 
-/* 「一致するパターンはありません。」の赤表示 */
-.nohits{
-  text-align:center;
-  color:#EF4444;
-  font-size:13px;
-  font-weight:700;
-  margin-top:4px;
-}
+/* ==== メッセージ ==== */
+.nohits{ text-align:center; color:#EF4444; font-size:13px; font-weight:700; margin-top:4px; }
 
-/* アウトライン青ボタン */
+/* ==== ボタン ==== */
 .btn-outline-blue{
   background:#fff; color:#1677FF; border:2px solid #1677FF;
-  font-weight:700; padding:0 12px; border-radius:6px;
-  height:var(--ctrl-h); line-height:var(--ctrl-h); cursor:pointer;
+  font-weight:700; padding:0 var(--btn-padx); border-radius:var(--radius-ctrl);
+  height:var(--ctrl-h); line-height:var(--ctrl-h); cursor:pointer; font-size:16px;
 }
 .btn-outline-blue:hover{ filter:brightness(0.95); }
 
-/* ---- 行レイアウト（高さ統一） ---- */
+/* 行レイアウト */
 .select-row{ display:flex; align-items:center; gap:8px; }
 .select-row > *{ margin:0 !important; }
 .select-row .btn{
-  height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important; padding:0 10px !important; border-radius:6px !important;
+  height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
+  padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
+  min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700; white-space:nowrap;
 }
 
-/* ▼ セレクト：常に表示されるカスタム矢印（はみ出し防止） */
+/* ==== セレクト（ここで実寸を強制固定） ==== */
 .select-wrap{
   position:relative; display:inline-flex; align-items:center;
-  height:var(--ctrl-h); border:1px solid #d1d5db; border-radius:6px;
+  height:var(--ctrl-h); border:1px solid #d1d5db; border-radius:var(--radius-ctrl);
   background:#fff; overflow:hidden;
 }
 .select-wrap::after{
   content:"";
   position:absolute; pointer-events:none;
-  right:8px; top:50%; transform:translateY(-35%);
-  width:0; height:0;
-  border-left:6px solid transparent;
-  border-right:6px solid transparent;
-  border-top:7px solid #55667a; /* ▼ の色 */
+  right:6px; top:50%; transform:translateY(-35%);
+  width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent;
+  border-top:6px solid #55667a;
 }
 .select-wrap select{
-  height:var(--ctrl-h); line-height:normal;        /* テキスト欠け防止 */
-  padding:0 28px 0 8px;                           /* 矢印分の余白 */
-  border:0; background:transparent; font-size:14px;
-  min-width:62px; max-width:84px; width:auto;
+  height:var(--ctrl-h); line-height:normal;
+  padding:0 var(--sel-padR) 0 var(--sel-padL) !important;
+  border:0; background:transparent; font-size:16px !important;
+  /* UA/他CSSの影響を完全に潰す */
+  min-width:0 !important;
+  max-width:${SEL_FIXED_PX}px !important;
+  width:${SEL_FIXED_PX}px !important;
+  box-sizing:content-box !important;
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
 }
-select::-ms-expand{ display:none; } /* 旧Edge/IE対策 */
+select::-ms-expand{ display:none; }
 
+/* 入力欄 */
 .select-row input{
   height:var(--ctrl-h); line-height:calc(var(--ctrl-h) - 2px);
-  padding:0 8px; border:1px solid #d1d5db; border-radius:6px; font-size:14px;
+  padding:0 10px; border:1px solid #d1d5db; border-radius:var(--radius-ctrl); font-size:16px !important;
   width:56px; text-align:center;
 }
 
-/* 優しめカラーの履歴ボタン */
-.btn-orange{ background:#FDE68A; border:1px solid #FBBF24; color:#111; cursor:pointer; }
-.btn-orange:hover{ filter:brightness(0.98); }
-.btn-violet{ background:#DDD6FE; border:1px solid #C4B5FD; color:#111; cursor:pointer; }
-.btn-violet:hover{ filter:brightness(0.98); }
+/* ==== ホーム画面専用：履歴保存を隠し、履歴一覧を右上へ ==== */
+.card{ position:relative; }
+.card .btn-violet{ position:absolute; top:6px; right:6px; z-index:1; }
+.card .btn-orange{ display:none !important; }
+@supports selector(:has(*)) {
+  .card .select-row.center-row:has(.btn-violet){ height:0 !important; margin:0 !重要; padding:0 !important; }
+}
 
-/* ---- モーダル ---- */
+/* モーダル */
 .modal{ position: fixed; inset: 0; z-index: 999; }
 .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
 .modal-body{
-  position:absolute; left:50%; top:50%;
-  transform:translate(-50%,-50%);
-  width:min(560px,92vw); background:#fff; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25);
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25);
 }
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
@@ -1472,8 +1514,24 @@ select::-ms-expand{ display:none; } /* 旧Edge/IE対策 */
 .modal-content{ padding:12px 14px; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 
-/* 小バッジ（将来用） */
+/* 予備 */
 .badge-mini{ display:inline-flex; align-items:center; height:16px; }
 .token-line .token-name{ font-size:12px; }
 `;
+})();
+
+/* ==== 万一 UA が幅を戻してしまう環境向けの保険 ==== */
+(function forceSelectWidthOnce(){
+  const apply = ()=>{
+    document.querySelectorAll('.select-wrap select').forEach(el=>{
+      (el as HTMLSelectElement).style.setProperty('width', SEL_FIXED_PX + 'px', 'important');
+      (el as HTMLSelectElement).style.setProperty('max-width', SEL_FIXED_PX + 'px', 'important');
+      (el as HTMLSelectElement).style.setProperty('min-width', '0', 'important');
+    });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', apply, { once:true });
+  } else {
+    apply();
+  }
 })();
