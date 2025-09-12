@@ -1390,52 +1390,58 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
-/* ===== スタイル注入（v4.8：戻る/履歴は固定・LR間隔統一・検索/逆順の文字だけ大きく・iPhone列幅補正・スマホ拡大抑止） ===== */
-(function injectStyleV48(){
-  const STYLE_ID = "legends-inline-style-v4";
+/* ===== スタイル注入（v4.9-hotfix：看板フルブリード無段差・中央寄せ＋既存調整すべて込み） ===== */
+(function injectStyleV49Hotfix(){
+  const STYLE_ID = "legends-inline-style-v49";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
 
   el.textContent = `
+/* ---- 共通・端末対策 ---- */
+html, body{ margin:0 !important; padding:0 !important; overflow-x:hidden !important; }
+html, body{ -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important; }
+@supports (-webkit-touch-callout:none){ input,select,textarea{ font-size:16px !important; } }
+
+/* ---- ルート変数 ---- */
 :root{
   --ctrl-h: 40px !important;
   --btn-minw: 84px !important;
   --btn-padx: 10px !important;
-  --btn-label-lg: 18px !important; /* ← 検索/逆順の“文字だけ”拡大用 */
+  --btn-label-lg: 18px !important; /* 検索/逆順の“文字のみ”拡大 */
   --radius-ctrl: 6px !important;
   --radius-card: 10px !important;
   --radius-modal: 10px !important;
   --radius-badge: 4px !important;
 }
 
-/* === スマホの自動拡大を抑止（テキストサイズ調整/ダブルタップ誤拡大の軽減） === */
-html, body{
-  -webkit-text-size-adjust: 100% !important;
-  text-size-adjust: 100% !important;
-  touch-action: manipulation;
+main.app{ margin-top:0 !important; padding-top:0 !important; background:#fff !important; }
+
+/* ==== 看板ヘッダー：フルブリード無段差（100vw不使用・左右余白ゼロ） ==== */
+main.app .header{ position:relative !important; margin:0 !important; padding:0 !important; border-radius:0 !important; }
+/* 帯は ::before 1枚だけ。左右を“マイナスマージン”でビュー幅まで拡張（スクロールバー差も吸収） */
+main.app .header::before{
+  content:"" !important;
+  position:absolute !important; inset:0 !important; z-index:0 !important;
+  margin-left:  calc(50% - 50vw - 1px) !important; /* -1px はサブピクセル段差の保険 */
+  margin-right: calc(50% - 50vw - 1px) !important;
+  background:linear-gradient(90deg,#22D3EE,#1677FF) !important;
+  pointer-events:none !important;
 }
-/* iOSの“入力フォーカス時の強制ズーム”対策：入力は常に16px以上 */
-@supports (-webkit-touch-callout:none) {
-  input, select, textarea{ font-size:16px !important; }
+/* 見出しテキストは帯の上に重ねて中央寄せ。背景は必ず透明（重ね塗り防止） */
+main.app .header > h1{
+  position:relative !important; z-index:1 !important;
+  display:flex !important; align-items:center !important; justify-content:center !important;
+  margin:0 !important; padding:10px 14px !important;
+  text-align:center !important; color:#fff !important; background:transparent !important; border-radius:0 !important;
 }
 
-/* === ヘッダー全面塗り（角丸なし・余白ゼロ） === */
-main.app{ background:#fff !important; padding-top:0 !important; }
-.header{ margin:0 !important; padding:0 !important; border-radius:0 !important; }
-.header > h1{
-  margin:0 !important; border-radius:0 !important;
-  display:block; width:100%;
-  background: linear-gradient(90deg,#22D3EE,#1677FF) !important;
-  color:#fff !important; padding:10px 14px !important;
-}
-
-/* === 行間（少し戻す） === */
+/* ==== 行間・フォーム ==== */
 .select-row{ display:flex; align-items:center; gap:12px !important; }
-.select-row + .select-row{ margin-top:16px !important; }           /* 1段目→2段目 */
+.select-row + .select-row{ margin-top:16px !important; }
 .card .select-row.center-row{ margin-top:16px !important; margin-bottom:16px !important; }
-.card + .card{ margin-top:18px !important; }                       /* 左カードと右カードの間 */
+.card + .card{ margin-top:18px !important; }
 
-/* === セレクト幅ガチ固定 === */
+/* セレクト幅ガチ固定 */
 .select-wrap{
   position:relative; display:inline-flex; align-items:center;
   width:${SEL_FIXED_PX}px !important; min-width:${SEL_FIXED_PX}px !important; max-width:${SEL_FIXED_PX}px !important;
@@ -1460,40 +1466,36 @@ select::-ms-expand{ display:none; }
   width:56px; text-align:center;
 }
 
-/* === ボタン（サイズあわせ：箱サイズは固定） === */
+/* ボタン（箱サイズ固定） */
 .select-row .btn{
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
   padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700; white-space:nowrap;
 }
-/* 検索（青）＆ 逆順（ピンク）の“文字だけ”大きく。箱サイズはそのまま */
+/* 検索/逆順 の“文字だけ”大きく（箱はそのまま） */
 .select-row .btn:not(.btn-outline-blue):not(.btn-gray):not(.btn-secondary):not(.btn-outline):not(.btn-violet){
   font-size:var(--btn-label-lg) !important;
 }
 
-/* ★ 一つ前へ戻る（青アウトライン）を元の見た目に固定 */
+/* 戻る（青アウトライン）固定 */
 .select-row .btn-outline-blue, .btn-outline-blue{
-  background:#fff !important;
-  color:#1677FF !important;
-  border:2px solid #1677FF !important;
+  background:#fff !important; color:#1677FF !important; border:2px solid #1677FF !important;
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
   padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 .btn-outline-blue:hover{ filter:brightness(0.95); }
 
-/* ★ 履歴一覧（バイオレット）色を固定 */
+/* 履歴（バイオレット）固定 */
 .card .btn-violet, .btn-violet{
-  background:#7C3AED !important;
-  border-color:#7C3AED !important;
-  color:#fff !important;
+  background:#7C3AED !important; border-color:#7C3AED !important; color:#fff !important;
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
   padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 
-/* === 結果表示まわり === */
-.res-list { display:grid; gap:10px; margin-top:8px; }
+/* 結果表示 */
+.res-list{ display:grid; gap:10px; margin-top:8px; }
 .res-summary{ margin:0; font-size:14px; }
 .res-card{ background:#f7fbff; border:1px solid #dfeefe; border-radius:var(--radius-card); padding:10px; }
 .res-head{ display:flex; gap:8px; align-items:baseline; }
@@ -1502,16 +1504,10 @@ select::-ms-expand{ display:none; }
 .res-dist{ opacity:.85; font-size:14px; }
 .res-name{ font-size:15px; }
 
-/* ★ LRバッジ：ホーム候補&検索結果を統一し、上下の“当たり”回避 */
-.res-lines .res-line .badge,
-.res-list  .res-line .badge{
-  display:inline-flex !important;
-  align-items:center !important;
-  justify-content:center !important;
-  padding:2px 8px !important;     /* 上下のアキを確保 */
-  line-height:1 !important;
-  height:auto !important;
-  margin-block:2px !important;    /* バッジの上下に2pxの外側余白 */
+/* LRバッジ（上下の当たり回避・サイズ統一） */
+.res-lines .res-line .badge, .res-list .res-line .badge{
+  display:inline-flex !important; align-items:center !important; justify-content:center !important;
+  padding:2px 8px !important; line-height:1 !important; height:auto !important; margin-block:2px !important;
   border-radius:var(--radius-badge); color:#fff; font-weight:700; font-size:14px;
 }
 .badge-lr{ background:#EF4444; }
@@ -1520,7 +1516,8 @@ select::-ms-expand{ display:none; }
 .nohits{ text-align:center; color:#EF4444; font-size:13px; font-weight:700; }
 
 /* pill */
-.pill{ display:inline-flex; align-items:center; justify-content:center; gap:.4em;
+.pill{
+  display:inline-flex; align-items:center; justify-content:center; gap:.4em;
   min-width:28px; height:28px; padding:0 .8em; border-radius:999px; background:#2EC5FF; color:#fff;
   border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1;
 }
@@ -1531,29 +1528,16 @@ select::-ms-expand{ display:none; }
   font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
 }
 
-/* === iPhone対策：検索結果テーブルの「1～100」(行番号) 列だけ太るのを抑止 === */
-@media (max-width: 480px) and (hover:none) and (pointer:coarse) {
-  .grid-wrap, .grid-wrap .grid { -webkit-text-size-adjust: 100%; }
-  .grid-wrap .grid{
-    table-layout: fixed !important;
-    width: 100% !important;
-    border-collapse: collapse !important;
-  }
-  .grid-wrap .grid th,
-  .grid-wrap .grid td{ min-width: 0 !important; }
-
-  /* 先頭列（行番号）を細く固定 */
+/* iPhone対策：検索結果テーブルの行番号列が太るのを抑止 */
+@media (max-width:480px) and (hover:none) and (pointer:coarse){
+  .grid-wrap, .grid-wrap .grid{ -webkit-text-size-adjust:100%; }
+  .grid-wrap .grid{ table-layout:fixed !important; width:100% !important; border-collapse:collapse !important; }
+  .grid-wrap .grid th, .grid-wrap .grid td{ min-width:0 !important; }
   .grid-wrap .grid th:first-child,
   .grid-wrap .grid td.rowhead,
   .grid-wrap .grid td:first-child{
-    width: 36px !important;
-    max-width: 36px !important;
-    padding-left: 6px !important;
-    padding-right: 6px !important;
-    white-space: nowrap;
-    text-overflow: clip;
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1, "lnum" 1;
+    width:36px !important; max-width:36px !important; padding-left:6px !important; padding-right:6px !important;
+    white-space:nowrap; text-overflow:clip; font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
   }
 }
 
@@ -1570,34 +1554,31 @@ select::-ms-expand{ display:none; }
 .modal-content{ padding:12px 14px; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 `;
-})();
 
-/* === ヘッダーを .app の左右/上パディング分だけ“食い込ませる”補正 ===
-   （.app の padding 値に自動追従。角丸は無しのまま） */
-(function bleedHeaderToAppEdges(){
-  const apply = () => {
+  /* 親の padding-top を食い込ませて “上の余白” をゼロにする */
+  const eatTopPadding = () => {
     const app = document.querySelector('main.app') as HTMLElement | null;
-    const hdr = document.querySelector('main.app > header.header') as HTMLElement | null;
+    const hdr = app?.querySelector('.header') as HTMLElement | null;
     if (!app || !hdr) return;
-    const cs = getComputedStyle(app);
-    const pl = parseFloat(cs.paddingLeft)  || 0;
-    const pr = parseFloat(cs.paddingRight) || 0;
-    const pt = parseFloat(cs.paddingTop)   || 0;
-    hdr.style.marginLeft = (-pl) + 'px';
-    hdr.style.marginRight = (-pr) + 'px';
+    let p: HTMLElement | null = hdr.parentElement as HTMLElement | null;
+    let pt = 0;
+    while(p && p !== document.body){
+      const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop)||0;
+      if (v){ pt = v; break; } p = p.parentElement as HTMLElement | null;
+    }
     hdr.style.marginTop = (-pt) + 'px';
   };
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', apply, { once:true });
-  } else { apply(); }
-  window.addEventListener('resize', apply, { passive:true });
+    document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
+  } else { eatTopPadding(); }
+  window.addEventListener('resize', eatTopPadding, { passive:true });
+  new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
 
-/* 幅ロック：後からCSSが当たっても常に上書き（保険・監視付き） */
+/* === 幅ロック：後からCSSが当たっても常に上書き（保険・監視付き） === */
 (function lockSelectWidthForever(){
   const W = SEL_FIXED_PX;
   const apply = (root: ParentNode | Document = document) => {
-    /* 影響範囲を絞るため、.select-wrap 内の select のみに限定 */
     root.querySelectorAll<HTMLSelectElement>('.select-wrap select').forEach(s => {
       s.style.setProperty('width',     W + 'px', 'important');
       s.style.setProperty('max-width', W + 'px', 'important');
@@ -1611,11 +1592,9 @@ select::-ms-expand{ display:none; }
       w.style.setProperty('height', 'var(--ctrl-h)', 'important');
     });
   };
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => apply(), { once:true });
   } else { apply(); }
-
   new MutationObserver(muts => {
     for (const m of muts) {
       if (m.type === 'childList') {
@@ -1628,28 +1607,18 @@ select::-ms-expand{ display:none; }
         }
       }
     }
-  }).observe(document.documentElement, {
-    subtree:true, childList:true, attributes:true, attributeFilter:['style','class']
-  });
+  }).observe(document.documentElement, { subtree:true, childList:true, attributes:true, attributeFilter:['style','class'] });
 })();
 
-/* === モバイルのズーム挙動を固定（ピンチ/ダブルタップ拡大を抑止） ===
-   ※ ピンチズームを許可したい場合は user-scalable=no / maximum-scale=1 を外してください。 */
+/* === ビューポート固定（ピンチ/ダブルタップ拡大を抑止） === */
 (function lockViewportOnMobile(){
   const ensure = () => {
-    const content =
-      'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    const content = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
     let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.setAttribute('name', 'viewport');
-      document.head.appendChild(meta);
-    }
+    if (!meta) { meta = document.createElement('meta'); meta.setAttribute('name','viewport'); document.head.appendChild(meta); }
     meta.setAttribute('content', content);
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ensure, { once:true });
-  } else {
-    ensure();
-  }
+  } else { ensure(); }
 })();
