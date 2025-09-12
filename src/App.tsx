@@ -1390,16 +1390,16 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
-/* ===== スタイル注入（v4.9-hotfix：看板フルブリード無段差・中央寄せ＋既存調整すべて込み） ===== */
-(function injectStyleV49Hotfix(){
-  const STYLE_ID = "legends-inline-style-v49";
+/* ===== スタイル注入（v4.9.1：帯フルブリード＋1段下げ＋行番号幅さらに固定） ===== */
+(function injectStyleV491(){
+  const STYLE_ID = "legends-inline-style-v491";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
 
   el.textContent = `
-/* ---- 共通・端末対策 ---- */
-html, body{ margin:0 !important; padding:0 !important; overflow-x:hidden !important; }
-html, body{ -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important; }
+/* ---- 共通リセット / 端末対策 ---- */
+html, body{ margin:0 !important; padding:0 !important; overflow-x:hidden !important;
+  -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important; }
 @supports (-webkit-touch-callout:none){ input,select,textarea{ font-size:16px !important; } }
 
 /* ---- ルート変数 ---- */
@@ -1407,7 +1407,7 @@ html, body{ -webkit-text-size-adjust:100% !important; text-size-adjust:100% !imp
   --ctrl-h: 40px !important;
   --btn-minw: 84px !important;
   --btn-padx: 10px !important;
-  --btn-label-lg: 18px !important; /* 検索/逆順の“文字のみ”拡大 */
+  --btn-label-lg: 18px !important;
   --radius-ctrl: 6px !important;
   --radius-card: 10px !important;
   --radius-modal: 10px !important;
@@ -1416,23 +1416,38 @@ html, body{ -webkit-text-size-adjust:100% !important; text-size-adjust:100% !imp
 
 main.app{ margin-top:0 !important; padding-top:0 !important; background:#fff !important; }
 
-/* ==== 看板ヘッダー：フルブリード無段差（100vw不使用・左右余白ゼロ） ==== */
+/* ==== 看板ヘッダー：100vwフルブリード無段差 ==== */
 main.app .header{ position:relative !important; margin:0 !important; padding:0 !important; border-radius:0 !important; }
-/* 帯は ::before 1枚だけ。左右を“マイナスマージン”でビュー幅まで拡張（スクロールバー差も吸収） */
 main.app .header::before{
   content:"" !important;
-  position:absolute !important; inset:0 !important; z-index:0 !important;
-  margin-left:  calc(50% - 50vw - 1px) !important; /* -1px はサブピクセル段差の保険 */
-  margin-right: calc(50% - 50vw - 1px) !important;
-  background:linear-gradient(90deg,#22D3EE,#1677FF) !important;
-  pointer-events:none !important;
+  position:absolute !important; z-index:0 !important; top:0 !important; bottom:0 !important;
+  left:  calc(50% - 50vw - 1px) !important;
+  right: calc(50% - 50vw - 1px) !important;
+  background:linear-gradient(
+    90deg,
+    #2AD6E7 0%,
+    #0BB1DF 50%,
+    #0A9FDE 100%
+  ) !important;
 }
-/* 見出しテキストは帯の上に重ねて中央寄せ。背景は必ず透明（重ね塗り防止） */
+
 main.app .header > h1{
   position:relative !important; z-index:1 !important;
-  display:flex !important; align-items:center !important; justify-content:center !important;
-  margin:0 !important; padding:10px 14px !important;
-  text-align:center !important; color:#fff !important; background:transparent !important; border-radius:0 !important;
+  /* ↓ flex はやめて、ブロック＋中央寄せに */
+  display:block !important;
+  width:100% !important;
+  margin:0 auto !important;
+  padding:22px 14px !important; /* 太さはお好みで（例: 22 → 28 など） */
+  text-align:center !important;
+  color:#fff !important; background:transparent !important; border-radius:0 !important;
+}
+
+
+
+/* ← “左シリンダー結果” など、ヘッダー直後のカードだけ 1段下げ */
+main.app > .header + .card{ margin-top:12px !important; }
+@media (min-width:768px){
+  main.app > .header + .card{ margin-top:16px !important; }
 }
 
 /* ==== 行間・フォーム ==== */
@@ -1466,18 +1481,15 @@ select::-ms-expand{ display:none; }
   width:56px; text-align:center;
 }
 
-/* ボタン（箱サイズ固定） */
+/* ボタン調整 */
 .select-row .btn{
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
   padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700; white-space:nowrap;
 }
-/* 検索/逆順 の“文字だけ”大きく（箱はそのまま） */
 .select-row .btn:not(.btn-outline-blue):not(.btn-gray):not(.btn-secondary):not(.btn-outline):not(.btn-violet){
   font-size:var(--btn-label-lg) !important;
 }
-
-/* 戻る（青アウトライン）固定 */
 .select-row .btn-outline-blue, .btn-outline-blue{
   background:#fff !important; color:#1677FF !important; border:2px solid #1677FF !important;
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
@@ -1485,8 +1497,6 @@ select::-ms-expand{ display:none; }
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 .btn-outline-blue:hover{ filter:brightness(0.95); }
-
-/* 履歴（バイオレット）固定 */
 .card .btn-violet, .btn-violet{
   background:#7C3AED !important; border-color:#7C3AED !important; color:#fff !important;
   height:var(--ctrl-h) !important; line-height:var(--ctrl-h) !important;
@@ -1494,7 +1504,7 @@ select::-ms-expand{ display:none; }
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 
-/* 結果表示 */
+/* ==== 結果表示 ==== */
 .res-list{ display:grid; gap:10px; margin-top:8px; }
 .res-summary{ margin:0; font-size:14px; }
 .res-card{ background:#f7fbff; border:1px solid #dfeefe; border-radius:var(--radius-card); padding:10px; }
@@ -1504,7 +1514,7 @@ select::-ms-expand{ display:none; }
 .res-dist{ opacity:.85; font-size:14px; }
 .res-name{ font-size:15px; }
 
-/* LRバッジ（上下の当たり回避・サイズ統一） */
+/* LRバッジ */
 .res-lines .res-line .badge, .res-list .res-line .badge{
   display:inline-flex !important; align-items:center !important; justify-content:center !important;
   padding:2px 8px !important; line-height:1 !important; height:auto !important; margin-block:2px !important;
@@ -1516,11 +1526,9 @@ select::-ms-expand{ display:none; }
 .nohits{ text-align:center; color:#EF4444; font-size:13px; font-weight:700; }
 
 /* pill */
-.pill{
-  display:inline-flex; align-items:center; justify-content:center; gap:.4em;
+.pill{ display:inline-flex; align-items:center; justify-content:center; gap:.4em;
   min-width:28px; height:28px; padding:0 .8em; border-radius:999px; background:#2EC5FF; color:#fff;
-  border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1;
-}
+  border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1; }
 .pill.pill-num{
   width:34px !important; height:34px !important; padding:0 !important; border-radius:50% !important;
   box-sizing:border-box !important; display:grid !important; place-items:center !important;
@@ -1528,26 +1536,30 @@ select::-ms-expand{ display:none; }
   font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
 }
 
-/* iPhone対策：検索結果テーブルの行番号列が太るのを抑止 */
-@media (max-width:480px) and (hover:none) and (pointer:coarse){
-  .grid-wrap, .grid-wrap .grid{ -webkit-text-size-adjust:100%; }
-  .grid-wrap .grid{ table-layout:fixed !important; width:100% !important; border-collapse:collapse !important; }
-  .grid-wrap .grid th, .grid-wrap .grid td{ min-width:0 !important; }
+/* ==== グリッド：行番号（1〜100）列の幅を常時ガチ固定 ==== */
+.grid-wrap .grid{ table-layout:fixed !important; width:100% !important; border-collapse:collapse !important; }
+.grid-wrap .grid th:first-child,
+.grid-wrap .grid td.rowhead,
+.grid-wrap .grid td:first-child{
+  width:32px !important; max-width:32px !important; min-width:28px !important;
+  padding-left:4px !important; padding-right:4px !important;
+  white-space:nowrap; text-overflow:clip;
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
+  -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important;
+}
+@media (max-width:480px){
   .grid-wrap .grid th:first-child,
   .grid-wrap .grid td.rowhead,
   .grid-wrap .grid td:first-child{
-    width:36px !important; max-width:36px !important; padding-left:6px !important; padding-right:6px !important;
-    white-space:nowrap; text-overflow:clip; font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
+    width:30px !important; max-width:30px !important;
   }
 }
 
 /* モーダル */
 .modal{ position:fixed; inset:0; z-index:999; }
 .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
-.modal-body{
-  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-  width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25);
-}
+.modal-body{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25); }
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
 .modal-x{ margin-left:auto; background:transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
@@ -1555,7 +1567,7 @@ select::-ms-expand{ display:none; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 `;
 
-  /* 親の padding-top を食い込ませて “上の余白” をゼロにする */
+  /* 上方向の余白を食い込む（親の padding-top を無効化） */
   const eatTopPadding = () => {
     const app = document.querySelector('main.app') as HTMLElement | null;
     const hdr = app?.querySelector('.header') as HTMLElement | null;
@@ -1564,7 +1576,7 @@ select::-ms-expand{ display:none; }
     let pt = 0;
     while(p && p !== document.body){
       const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop)||0;
-      if (v){ pt = v; break; } p = p.parentElement as HTMLElement | null;
+      if (v){ pt = v; break; } p = p.parentElement;
     }
     hdr.style.marginTop = (-pt) + 'px';
   };
@@ -1575,7 +1587,7 @@ select::-ms-expand{ display:none; }
   new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
 
-/* === 幅ロック：後からCSSが当たっても常に上書き（保険・監視付き） === */
+/* === 幅ロック：後からCSSが当たっても常に上書き === */
 (function lockSelectWidthForever(){
   const W = SEL_FIXED_PX;
   const apply = (root: ParentNode | Document = document) => {
@@ -1597,9 +1609,7 @@ select::-ms-expand{ display:none; }
   } else { apply(); }
   new MutationObserver(muts => {
     for (const m of muts) {
-      if (m.type === 'childList') {
-        m.addedNodes.forEach(n => { if (n instanceof HTMLElement) apply(n); });
-      }
+      if (m.type === 'childList') m.addedNodes.forEach(n => { if (n instanceof HTMLElement) apply(n); });
       if (m.type === 'attributes') {
         const t = m.target as Element;
         if (t && (t.tagName === 'SELECT' || (t as HTMLElement).classList?.contains?.('select-wrap'))) {
