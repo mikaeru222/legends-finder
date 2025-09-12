@@ -1390,7 +1390,7 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
-/* ===== スタイル注入（v4.8：戻る/履歴は固定・LR間隔統一・検索/逆順の文字だけ大きく） ===== */
+/* ===== スタイル注入（v4.8：戻る/履歴は固定・LR間隔統一・検索/逆順の文字だけ大きく・iPhone列幅補正・スマホ拡大抑止） ===== */
 (function injectStyleV48(){
   const STYLE_ID = "legends-inline-style-v4";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
@@ -1406,6 +1406,17 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   --radius-card: 10px !important;
   --radius-modal: 10px !important;
   --radius-badge: 4px !important;
+}
+
+/* === スマホの自動拡大を抑止（テキストサイズ調整/ダブルタップ誤拡大の軽減） === */
+html, body{
+  -webkit-text-size-adjust: 100% !important;
+  text-size-adjust: 100% !important;
+  touch-action: manipulation;
+}
+/* iOSの“入力フォーカス時の強制ズーム”対策：入力は常に16px以上 */
+@supports (-webkit-touch-callout:none) {
+  input, select, textarea{ font-size:16px !important; }
 }
 
 /* === ヘッダー全面塗り（角丸なし・余白ゼロ） === */
@@ -1520,6 +1531,32 @@ select::-ms-expand{ display:none; }
   font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
 }
 
+/* === iPhone対策：検索結果テーブルの「1～100」(行番号) 列だけ太るのを抑止 === */
+@media (max-width: 480px) and (hover:none) and (pointer:coarse) {
+  .grid-wrap, .grid-wrap .grid { -webkit-text-size-adjust: 100%; }
+  .grid-wrap .grid{
+    table-layout: fixed !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  .grid-wrap .grid th,
+  .grid-wrap .grid td{ min-width: 0 !important; }
+
+  /* 先頭列（行番号）を細く固定 */
+  .grid-wrap .grid th:first-child,
+  .grid-wrap .grid td.rowhead,
+  .grid-wrap .grid td:first-child{
+    width: 36px !important;
+    max-width: 36px !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    white-space: nowrap;
+    text-overflow: clip;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+  }
+}
+
 /* モーダル */
 .modal{ position:fixed; inset:0; z-index:999; }
 .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
@@ -1594,4 +1631,25 @@ select::-ms-expand{ display:none; }
   }).observe(document.documentElement, {
     subtree:true, childList:true, attributes:true, attributeFilter:['style','class']
   });
+})();
+
+/* === モバイルのズーム挙動を固定（ピンチ/ダブルタップ拡大を抑止） ===
+   ※ ピンチズームを許可したい場合は user-scalable=no / maximum-scale=1 を外してください。 */
+(function lockViewportOnMobile(){
+  const ensure = () => {
+    const content =
+      'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'viewport');
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', content);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensure, { once:true });
+  } else {
+    ensure();
+  }
 })();
