@@ -1472,6 +1472,30 @@ main.app > .header + .card{ margin-top:12px !important; }
   height:var(--ctrl-h) !important; font-size:16px !important;
   box-sizing:content-box !important; appearance:none !important; -webkit-appearance:none !important; -moz-appearance:none !important;
 }
+/* === CX3 セレクトの二重枠を解消（このブロックを追記） === */
+.select-wrap{
+  /* 外側の1本だけ表示 */
+  border: 1px solid #d1d5db !important;
+}
+
+.select-wrap select{
+  /* 中の枠・影・背景を消す */
+  border: 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  /* 右側の▼分の余白（お好みで） */
+  padding-right: 24px !important;
+}
+
+.select-wrap select:focus,
+.select-wrap select:focus-visible{
+  /* フォーカス時は薄い内側ハイライトだけ（任意） */
+  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
+  outline: none !important;
+}
+
 select::-ms-expand{ display:none; }
 
 /* 入力欄 */
@@ -1503,6 +1527,18 @@ select::-ms-expand{ display:none; }
   padding:0 var(--btn-padx) !important; border-radius:var(--radius-ctrl) !important;
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
+
+/* === 二重枠対策：フォーカスのアウトライン/影を除去 + 枠幅を統一 === */
+button, .btn, input, select { outline:none !important; box-shadow:none !important; }
+button:focus, button:focus-visible, button:active,
+.btn:focus, .btn:focus-visible, .btn:active,
+input:focus, input:focus-visible,
+select:focus, select:focus-visible { outline:none !important; box-shadow:none !important; }
+
+/* 既定ボタンの枠線を 1px に統一（内側の“もう1本”を防止）*/
+.btn, .btn-blue, .btn-pink, .btn-teal, .btn-violet, .btn-gray { border-width:1px !important; }
+/* アウトラインボタンも最終的に 1px へ（上の指定が勝つ）*/
+.btn-outline-blue { border-width:1px !important; }
 
 /* ==== 結果表示 ==== */
 .res-list{ display:grid; gap:10px; margin-top:8px; }
@@ -1567,24 +1603,24 @@ select::-ms-expand{ display:none; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 `;
 
-  /* 上方向の余白を食い込む（親の padding-top を無効化） */
-  const eatTopPadding = () => {
-    const app = document.querySelector('main.app') as HTMLElement | null;
-    const hdr = app?.querySelector('.header') as HTMLElement | null;
-    if (!app || !hdr) return;
-    let p: HTMLElement | null = hdr.parentElement as HTMLElement | null;
-    let pt = 0;
-    while(p && p !== document.body){
-      const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop)||0;
-      if (v){ pt = v; break; } p = p.parentElement;
-    }
-    hdr.style.marginTop = (-pt) + 'px';
-  };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
-  } else { eatTopPadding(); }
-  window.addEventListener('resize', eatTopPadding, { passive:true });
-  new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
+/* 上方向の余白を食い込む（親の padding-top を無効化） */
+const eatTopPadding = () => {
+  const app = document.querySelector('main.app') as HTMLElement | null;
+  const hdr = app?.querySelector('.header') as HTMLElement | null;
+  if (!app || !hdr) return;
+  let p: HTMLElement | null = hdr.parentElement as HTMLElement | null;
+  let pt = 0;
+  while(p && p !== document.body){
+    const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop)||0;
+    if (v){ pt = v; break; } p = p.parentElement;
+  }
+  hdr.style.marginTop = (-pt) + 'px';
+};
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
+} else { eatTopPadding(); }
+window.addEventListener('resize', eatTopPadding, { passive:true });
+new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
 
 /* === 幅ロック：後からCSSが当たっても常に上書き === */
