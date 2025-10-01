@@ -25,6 +25,72 @@ const CSV_URL = abs((import.meta as any).env.VITE_CSV_URL || "cards.cx3.csv");
 const MAX_LR_CANDIDATES = 4;
 const SEARCH_BLUE = "#1677FF";
 
+/** ── 色決定ポリシー（PDF準拠・全レア色分け）────────────────────────
+ *  1) 「数字+P」は基本 SR★（オレンジ）
+ *  2) ただし SPECIAL_P（= PでもLR扱いのもの）は LR★（紫）
+ *  3) それ以外はレアリティ文字列の色（★はそのまま渡す）
+ *  4) ★背景色は N（白）以外はすべて着色（= PDFと同じ“全部色分け”）
+ */
+// ★ CSVのレア表記を最優先。無ければ保険で判定。
+// ★ CSVのレア表記を最優先。無ければ保険で判定。
+// ★ CSVのレア表記を最優先。無ければ保険で判定。
+const colorForToken = (token: string, rarityUpper?: string): string => {
+  // すべて正規化してから判定
+  const k  = toHalf(String(token)).toUpperCase();
+  const ru = normalizeRarity(rarityUpper || "");
+
+  // ① 「辞書が無印でも P なら ★ 扱い」に補正
+  //    LR + 〇P → LR★（紫） / SR + 〇P → SR★（橙） / CP + 〇P → CP★（橙）
+  if (/^\d+P$/.test(k)) {
+    if (ru === "LR") return colorForRarity("LR★");
+    if (ru === "SR") return colorForRarity("SR★");
+    if (ru === "CP") return colorForRarity("CP★");
+  }
+
+  // ② SPECIAL_P は常に LR★（紫）
+  if (SPECIAL_P.has(k)) return colorForRarity("LR★");
+
+  // ③ 正規化済みのレア表記が来ていればその色を使う
+  if (ru) return colorForRarity(ru);
+
+  // ④ 最後の保険：数字+P は SR★（箔押し扱い）
+  if (/^\d+P$/.test(k)) return colorForRarity("SR★");
+
+  // ⑤ それ以外は N（白）
+  return colorForRarity("N");
+};
+
+// ★ 背景色の有無（PDF完全準拠：N以外は全部色を付ける / SPECIAL_P は当然ON）
+const shouldTint = (token: string, rarityUpper?: string): boolean => {
+  const k = toHalf(String(token)).toUpperCase();
+  if (SPECIAL_P.has(k)) return true;
+  const r = normalizeRarity(rarityUpper || "");
+  return r !== "" && r !== "N";
+};
+
+// ← shouldTint() の直後に追加
+// ← shouldTint() の直後に差し替え
+const normalizeRarity = (raw?: string): string => {
+  const s0 = toHalf(String(raw || "")).toUpperCase().trim();
+  const s  = s0.replace(/\s+/g, "").replace(/_/g, "");
+
+  // ★P（箔押し）だけを ★ に寄せる。無印LRはそのまま赤（LR）。
+  // LRP/ LR★ → LR★（紫）
+  if (s === "LR★" || s === "LRP") return "LR★";
+
+  // SRP/ SR★/ PA → SR★（オレンジ）
+  if (s === "SR★" || s === "SRP" || s === "PA") return "SR★";
+
+  // CPP/ CP★ → CP★（オレンジ）
+  if (s === "CP★" || s === "CPP") return "CP★";
+
+  // ベースはそのまま
+  if (s === "LR" || s === "SR" || s === "CP" || s === "R") return s;
+  if (s === "N" || s === "NORMAL" || s === "NORM" || s === "0") return "N";
+
+  return s; // 不明なものはそのまま返す（上位で判断）
+};
+
 const CIRCLED_MAP: Record<string, number> = { "①":1,"②":2,"③":3,"④":4,"⑤":5,"⑥":6,"⑦":7,"⑧":8,"⑨":9,"⑩":10,"⑪":11,"⑫":12 };
 const toNum = (v:any):number => {
   if (v==null) return NaN;
@@ -72,7 +138,8 @@ const routeFromHash = (): Route => {
 };
 const nav = (r: Route) => { location.hash = "/" + r; };
 
-const isCx3 = (setKey: string) => /CX3|XC3|CX-3/i.test(setKey);
+// CX3/CX4 を“完全配列表モード”として扱う
+const isCxMode = (setKey: string) => /CX[34]|XC[34]|CX-[34]/i.test(setKey);
 
 /* ========= 永続保存（複数件対応 / localStorage） ========= */
 export type SavedEntry = { id: string; pattern: number[]; memo: string; ts: number };
@@ -136,6 +203,7 @@ export default function App() {
     rowsNorm.forEach(r => { const key = String(r.set || "").trim(); if (key) seen.add(key); });
     const arr = [...seen];
     if (!arr.includes("CX3")) arr.push("CX3");
+    if (!arr.includes("CX4")) arr.push("CX4"); // 追加
     return arr.sort((a,b)=>{
       const na = parseInt(a.replace(/\D+/g,""),10);
       const nb = parseInt(b.replace(/\D+/g,""),10);
@@ -239,9 +307,15 @@ export default function App() {
     return () => clearTimeout(t);
   }, [candRInput]);
 
-  /* ===== CX3 カード辞書 ===== */
+  // 共通(cards.csv) / CX3 / CX4 を分けて持つ
+  const [commonKeyRarity, setCommonKeyRarity] = useState<Map<string,string>>(new Map());
+  const [commonKeyName,   setCommonKeyName]   = useState<Map<string,string>>(new Map());
+
   const [cx3KeyRarity, setCx3KeyRarity] = useState<Map<string,string>>(new Map());
   const [cx3KeyName,   setCx3KeyName]   = useState<Map<string,string>>(new Map());
+
+  const [cx4KeyRarity, setCx4KeyRarity] = useState<Map<string,string>>(new Map());
+  const [cx4KeyName,   setCx4KeyName]   = useState<Map<string,string>>(new Map());
 
   const deriveKeys = (codeRaw: string): string[] => {
     const u = toHalf(String(codeRaw||"")).toUpperCase().trim();
@@ -263,23 +337,55 @@ export default function App() {
 
   useEffect(() => { (async ()=>{
     try{
-      const cards = await loadCx3Cards(abs("cards.cx3.csv"));
-      const mpR = new Map<string,string>();
-      const mpN = new Map<string,string>();
+      const mpCommonR = new Map<string,string>();
+      const mpCommonN = new Map<string,string>();
+      const mpCX3R    = new Map<string,string>();
+      const mpCX3N    = new Map<string,string>();
+      const mpCX4R    = new Map<string,string>();
+      const mpCX4N    = new Map<string,string>();
 
-      for (const c of cards as any[]) {
-        const codeRaw = String(c.code || "");
-        const name = String(c.name || "");
-        const rar  = String(c.rarity || "");
-        for (const k of deriveKeys(codeRaw)) {
-          if (name && !mpN.has(k)) mpN.set(k, name);
-          if (rar  && !mpR.has(k)) mpR.set(k, rar);
+      // 共通（cards.csv）
+      try{
+        const cards = await loadCx3Cards(abs("cards.csv"));
+        for (const c of cards as any[]) {
+          const code = String(c.code||""); const name = String(c.name||""); const rar = String(c.rarity||"");
+          for (const k of deriveKeys(code)) {
+            if (name && !mpCommonN.has(k)) mpCommonN.set(k, name);
+            if (rar  && !mpCommonR.has(k)) mpCommonR.set(k, rar);
+          }
         }
+      }catch{}
+
+      // CX3（cards.cx3.csv）
+      try{
+        const cards = await loadCx3Cards(abs("cards.cx3.csv"));
+        for (const c of cards as any[]) {
+          const code = String(c.code||""); const name = String(c.name||""); const rar = String(c.rarity||"");
+          for (const k of deriveKeys(code)) {
+            if (name && !mpCX3N.has(k)) mpCX3N.set(k, name);
+            if (rar  && !mpCX3R.has(k)) mpCX3R.set(k, rar);
+          }
+        }
+      }catch{}
+
+      // CX4（cards.cx4.csv → cx4_cards.csv）
+      for (const src of ["cards.cx4.csv", "cx4_cards.csv"]) {
+        try{
+          const cards = await loadCx3Cards(abs(src));
+          for (const c of cards as any[]) {
+            const code = String(c.code||""); const name = String(c.name||""); const rar = String(c.rarity||"");
+            for (const k of deriveKeys(code)) {
+              if (name && !mpCX4N.has(k)) mpCX4N.set(k, name);
+              if (rar  && !mpCX4R.has(k)) mpCX4R.set(k, rar);
+            }
+          }
+        }catch{}
       }
 
-      setCx3KeyRarity(mpR);
-      setCx3KeyName(mpN);
-    }catch(e){ console.warn("cards.cx3.csv 読込失敗:", e); }
+      setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
+      setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
+      setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
+    }catch(e){ console.warn("cards csv 読込失敗:", e); }
   })() }, []);
 
   const nameByTokenLoose = (rawToken: string): string | undefined => {
@@ -291,8 +397,17 @@ export default function App() {
     }
     return undefined;
   };
+  // 置き換え版（SPECIAL_P を最優先）
   const rarityByTokenStrict = (rawToken: string): string | undefined => {
     const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+
+    // （確認用ログ。不要なら消してOK）
+    if ((window as any).__DBG_LOG !== false) console.debug("[rarityByTokenStrict]", t);
+
+    // ★ SPECIAL_P は常に LR★（辞書より優先）
+    if (SPECIAL_P.has(t)) return "LR★";
+
+    // 辞書ヒット → 数値/ゼロ埋め/P有無を補完して検索
     if (cx3KeyRarity.has(t)) return cx3KeyRarity.get(t);
     const m = t.match(/^(\d+)(P)?$/);
     if (!m) return undefined;
@@ -305,29 +420,93 @@ export default function App() {
 
   const getRarityByTokenStrict = (k:string) => rarityByTokenStrict(k);
   const getNameByTokenStrict   = (k:string) => nameByTokenLoose(k);
+  // ← deriveKeys の直下に貼る
+  const rarityStrictFor = (setKey: string) => (rawToken: string) => {
+    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+    if (SPECIAL_P.has(t)) return "LR★";
 
-  /* ===== 位置 CSV（CX3） ===== */
+    const pick = /CX4|XC4|CX-4/i.test(setKey)
+      ? cx4KeyRarity
+      : /CX3|XC3|CX-3/i.test(setKey)
+        ? cx3KeyRarity
+        : commonKeyRarity;
+
+    if (pick.has(t)) return pick.get(t)!;
+
+    const m = t.match(/^(\d+)(P)?$/);
+    if (m) {
+      const n  = String(parseInt(m[1],10));
+      const n2 = n.padStart(2,"0");
+      const wantP = !!m[2];
+      if (wantP) return pick.get(`${n}P`) || pick.get(`${n2}P`);
+      return pick.get(n) || pick.get(n2) || undefined;
+    }
+
+    if (commonKeyRarity.has(t)) return commonKeyRarity.get(t);
+    return undefined;
+  };
+
+  const nameLooseFor = (setKey: string) => (rawToken: string) => {
+    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+    const pick = /CX4|XC4|CX-4/i.test(setKey)
+      ? cx4KeyName
+      : /CX3|XC3|CX-3/i.test(setKey)
+        ? cx3KeyName
+        : commonKeyName;
+
+    if (pick.has(t)) return pick.get(t);
+    for (const k of deriveKeys(t)) {
+      const n = pick.get(k) || commonKeyName.get(k);
+      if (n) return n;
+    }
+    return undefined;
+  };
+
+  /* ===== 位置 CSV（CX3 / CX4） ===== */
+
+  // 行番号列（インデックス列）を検出する共通関数
+  const detectRowIndexCols = (raw:any[]): Set<number> => {
+    const idx = new Set<number>();
+    for (let c=1;c<=12;c++){
+      let total = 0, pureNo = 0, hasOther = 0;
+      for (const r of raw){
+        const arr = (r as any)[`col${c}`] as number[] | undefined;
+        total++;
+        if (!arr?.length) continue;
+        if (arr.length === 1 && arr[0] === r.no) pureNo++;
+        else hasOther++;
+      }
+      if (total>0 && pureNo/total >= 0.9 && hasOther === 0) idx.add(c);
+    }
+    return idx;
+  };
+
   const [cx3Pos, setCx3Pos] = useState<PositionRow[]>([]);
   const [rowIndexCols, setRowIndexCols] = useState<Set<number>>(new Set());
   useEffect(() => { (async ()=>{
     try{
       const raw:any[] = await loadPositions(abs("cx3_positions.csv"));
-      const idx = new Set<number>();
-      for (let c=1;c<=12;c++){
-        let total = 0, pureNo = 0, hasOther = 0;
-        for (const r of raw){
-          const arr = (r as any)[`col${c}`] as number[] | undefined;
-          total++;
-          if (!arr?.length) continue;
-          if (arr.length === 1 && arr[0] === r.no) pureNo++;
-          else hasOther++;
-        }
-        if (total>0 && pureNo/total >= 0.9 && hasOther === 0) idx.add(c);
-      }
       setCx3Pos(raw);
-      setRowIndexCols(idx);
+      setRowIndexCols(detectRowIndexCols(raw));
     }catch(e){ console.warn("cx3_positions.csv 読込失敗:", e); }
   })() }, []);
+
+  // CX4
+  const [cx4Pos, setCx4Pos] = useState<PositionRow[]>([]);
+  const [rowIndexColsCX4, setRowIndexColsCX4] = useState<Set<number>>(new Set());
+  useEffect(() => { (async ()=>{
+    try{
+      const raw:any[] = await loadPositions(abs("cx4_positions.csv"));
+      setCx4Pos(raw);
+      setRowIndexColsCX4(detectRowIndexCols(raw));
+    }catch(e){ console.warn("cx4_positions.csv 読込失敗:", e); }
+  })() }, []);
+
+  // 選択セットに応じた参照
+  const posL = useMemo(()=> /CX4|XC4|CX-4/i.test(leftSet) ? cx4Pos : cx3Pos,  [leftSet, cx3Pos, cx4Pos]);
+  const posR = useMemo(()=> /CX4|XC4|CX-4/i.test(rightSet)? cx4Pos : cx3Pos,  [rightSet,cx3Pos, cx4Pos]);
+  const rowIdxL = useMemo(()=> /CX4|XC4|CX-4/i.test(leftSet) ? rowIndexColsCX4 : rowIndexCols,  [leftSet,rowIndexCols,rowIndexColsCX4]);
+  const rowIdxR = useMemo(()=> /CX4|XC4|CX-4/i.test(rightSet)? rowIndexColsCX4 : rowIndexCols,  [rightSet,rowIndexCols,rowIndexColsCX4]);
 
   /* ===== 連番判定（空行だけスキップ） ===== */
   type Cx3Hit = {
@@ -425,8 +604,8 @@ export default function App() {
         let nextAnySteps = 0;
         let nextAnyMany: number[] | undefined;
         if (direction === "down") {
-          let k = rowsPath[rowsPath.length - 1];
-          while (k < seq.length && !(seq[k] && seq[k].length)) k++;
+          let k = rowsPath[rowsPath.length - 1] - 1;
+          while (++k < seq.length && !(seq[k] && seq[k].length)) {}
           if (k < seq.length) { nextAnySteps = k - (rowsPath[rowsPath.length - 1] - 1); nextAnyMany = seq[k]; }
         } else {
           let k = rowsPath[0] - 2;
@@ -446,12 +625,12 @@ export default function App() {
   }
 
   const lHitsCX3_raw = useMemo(
-    () => isCx3(leftSet)  ? buildCx3Hits(cx3Pos, lQuery, rowIndexCols, dirL) : [],
-    [leftSet,  cx3Pos, lQuery, rowIndexCols, dirL]
+    () => (isCxMode(leftSet) ? buildCx3Hits(posL, lQuery, rowIdxL, dirL) : []),
+    [leftSet,  posL, lQuery, rowIdxL, dirL]
   );
   const rHitsCX3_raw = useMemo(
-    () => isCx3(rightSet) ? buildCx3Hits(cx3Pos, rQuery, rowIndexCols, dirR) : [],
-    [rightSet, cx3Pos, rQuery, rowIndexCols, dirR]
+    () => (isCxMode(rightSet) ? buildCx3Hits(posR, rQuery, rowIdxR, dirR) : []),
+    [rightSet, posR, rQuery, rowIdxR, dirR]
   );
 
   const lHitsCX3 = useMemo(() => lHitsCX3_raw, [lHitsCX3_raw]);
@@ -476,60 +655,86 @@ export default function App() {
     return [...s].sort((a,b)=>a-b);
   };
 
-  const visColsCx3L = useMemo(()=> visiblePosFromCx3Hits(lHitsCX3, rowIndexCols), [lHitsCX3, rowIndexCols]);
-  const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIndexCols), [rHitsCX3, rowIndexCols]);
+  const visColsCx3L = useMemo(()=> visiblePosFromCx3Hits(lHitsCX3, rowIdxL), [lHitsCX3, rowIdxL]);
+  const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIdxR), [rHitsCX3, rowIdxR]);
   const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
   const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
   // 候補
   type Candidate = { code:string; name:string; dist:number; color:string; badge:"LR"|"LR★" };
-  const buildLinesForHit = (hit: Cx3Hit): Candidate[] => {
+
+  const buildLinesForHit = (
+    hit: Cx3Hit,
+    positions: PositionRow[],
+    getRarityForKey?: (key: string) => string | undefined,
+    getNameForKey?:   (key: string) => string | undefined
+  ): Candidate[] => {
+    // 引数が来ない呼び出し用のフォールバック
+    const rarFn  = (typeof getRarityForKey === "function") ? getRarityForKey : (() => undefined);
+    const nameFn = (typeof getNameForKey   === "function") ? getNameForKey   : (() => undefined);
+
     const col = hit.col;
     const start = hit.row;
-    const rowMap = new Map<number, PositionRow>(cx3Pos.map(r => [r.no, r]));
-    const allNos = cx3Pos.map(r => r.no);
+    const rowMap = new Map<number, PositionRow>(positions.map(r => [r.no, r]));
+    const allNos = positions.map(r => r.no);
     const maxRowNo = allNos.length ? Math.max(...allNos) : 0;
     const minRowNo = allNos.length ? Math.min(...allNos) : 1;
 
+    // 直前にある
     const firstDist = new Map<string, number>();
+    const classByToken = new Map<string, "LR" | "LR★">();
+
+    const stepForward = (rr:number, base:number) => {
+      const row = rowMap.get(rr);
+      const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
+      if (!Array.isArray(tokens) || tokens.length === 0) return;
+
+      for (const raw of tokens) {
+        const t   = String(raw).toUpperCase();
+        const rar = (rarFn(t) || "").toUpperCase();
+
+        // LR系は全部拾う（LR, LR*, LRP, LR★）／SPECIAL_Pは常に対象
+        const isLrAny = /^LR/.test(rar) || SPECIAL_P.has(t);
+        if (!isLrAny) continue;
+
+        if (!firstDist.has(t)) firstDist.set(t, Math.abs(rr - base));
+
+        // バッジ（紫 or 赤）をここで確定・記録しておく
+        const cls: "LR" | "LR★" = (SPECIAL_P.has(t) || rar === "LR★") ? "LR★" : "LR";
+        if (!classByToken.has(t)) classByToken.set(t, cls);
+      }
+    };
+
     if (hit.dir === "down") {
       for (let rr = start + 1; rr <= maxRowNo; rr++) {
-        const row = rowMap.get(rr);
-        const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
-        if (!Array.isArray(tokens) || tokens.length === 0) continue;
-        for (const raw of tokens) {
-          const t = String(raw).toUpperCase();
-          const rar = getRarityByTokenStrict(t) || "";
-          if (!(SPECIAL_P.has(t) || rar.toUpperCase() === "LR")) continue;
-          if (!firstDist.has(t)) firstDist.set(t, rr - start);
-        }
+        stepForward(rr, start);
         if (firstDist.size >= MAX_LR_CANDIDATES) break;
       }
     } else {
       for (let rr = start - 1; rr >= minRowNo; rr--) {
-        const row = rowMap.get(rr);
-        const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
-        if (!Array.isArray(tokens) || tokens.length === 0) continue;
-        for (const raw of tokens) {
-          const t = String(raw).toUpperCase();
-          const rar = getRarityByTokenStrict(t) || "";
-          if (!(SPECIAL_P.has(t) || rar.toUpperCase() === "LR")) continue;
-          if (!firstDist.has(t)) firstDist.set(t, start - rr);
-        }
+        stepForward(rr, start);
         if (firstDist.size >= MAX_LR_CANDIDATES) break;
       }
     }
 
+    // items 作成ブロックをこれに差し替え
     const items: Candidate[] = [];
     firstDist.forEach((dist, t) => {
-      const isPurple = SPECIAL_P.has(t);
-      const name = getNameByTokenStrict(t) || t;
+      // stepForward で記録したクラスを最優先で使う
+      const cls: "LR" | "LR★" =
+        classByToken.get(t) ??
+        ((SPECIAL_P.has(t) || ((rarFn(t) || "").toUpperCase() === "LR★")) ? "LR★" : "LR");
+
+      const name = nameFn(t) || t;
       items.push({
-        code: t, name, dist,
-        color: isPurple ? "#B388FF" : "#EF4444",
-        badge: isPurple ? "LR★" : "LR",
+        code: t,
+        name,
+        dist,
+        color: colorForRarity(cls === "LR★" ? "LR★" : "LR"),
+        badge: cls,
       });
     });
+
     return items.sort((a,b) => a.dist - b.dist).slice(0, MAX_LR_CANDIDATES);
   };
 
@@ -539,11 +744,20 @@ export default function App() {
     lines?: ReturnType<typeof buildLinesForHit>;
     noHigh?: boolean; nextAny?: number;
   };
-  const buildSuggestions = (pat: number[], direction: "down" | "up" = "down"): Sug[] => {
-    if (!isCx3("CX3") || !cx3Pos.length || !pat.length) return [];
-    const hits = buildCx3Hits(cx3Pos, pat, rowIndexCols, direction);
+  const buildSuggestions = (pat: number[], setKey: string, direction: "down" | "up" = "down"): Sug[] => {
+    if (!isCxMode(setKey) || !pat.length) return [];
+    const usePos  = /CX4|XC4|CX-4/i.test(setKey) ? cx4Pos : cx3Pos;
+    const useIdx  = /CX4|XC4|CX-4/i.test(setKey) ? rowIndexColsCX4 : rowIndexCols;
+    if (!usePos.length) return [];
+    const hits = buildCx3Hits(usePos, pat, useIdx, direction);
     const prepared = hits.map(h => {
-      const lines = buildLinesForHit(h);
+      const lines = buildLinesForHit(
+        h,
+        usePos,
+        rarityStrictFor(setKey), // セット依存のレア辞書
+        nameLooseFor(setKey)     // セット依存の名前辞書
+      );
+
       const score = lines.length ? Math.min(...lines.map(x => x.dist)) : Number.POSITIVE_INFINITY;
       const nextAny = (typeof h.nextAnySteps === "number") ? h.nextAnySteps : undefined;
       return { h, lines, score, nextAny };
@@ -570,21 +784,33 @@ export default function App() {
   };
 
   const candSugL = useMemo(
-    () => isCx3(leftSet) ? buildSuggestions(patLNow, "down") : [],
-    [leftSet, patLNow, cx3Pos, rowIndexCols, cx3KeyRarity, cx3KeyName]
+    () => isCxMode(leftSet) ? buildSuggestions(patLNow, leftSet, "down") : [],
+    [leftSet, patLNow, cx3Pos, cx4Pos, rowIndexCols, rowIndexColsCX4, cx3KeyRarity, cx3KeyName]
   );
   const candSugR = useMemo(
-    () => isCx3(rightSet) ? buildSuggestions(patRNow, "down") : [],
-    [rightSet, patRNow, cx3Pos, rowIndexCols, cx3KeyRarity, cx3KeyName]
+    () => isCxMode(rightSet) ? buildSuggestions(patRNow, rightSet, "down") : [],
+    [rightSet, patRNow, cx3Pos, cx4Pos, rowIndexCols, rowIndexColsCX4, cx3KeyRarity, cx3KeyName]
   );
 
   /* ====== ルピ算出（表示はしない） ====== */
-  const minLoopsFromHits = (hits:any[], cx3:boolean): number | null => {
+  const minLoopsFromHits = (
+    hits: any[],
+    cxMode: boolean,
+    positions?: PositionRow[],
+    setKey?: string
+  ): number | null => {
+
     if (!hits?.length) return null;
-    if (cx3) {
+    if (cxMode) {
       const arr:number[] = [];
       for (const h of hits) {
-        const lines = buildLinesForHit(h);
+        const lines = buildLinesForHit(
+          h,
+          positions || [],
+          setKey ? rarityStrictFor(setKey) : undefined,
+          setKey ? nameLooseFor(setKey)   : undefined
+        );
+
         if (lines?.length) arr.push(Math.min(...lines.map(l=>l.dist)));
       }
       if (!arr.length) return null;
@@ -593,8 +819,8 @@ export default function App() {
     const arr = hits.map(h=>h?.nextLRSteps).filter((n:number)=>typeof n==="number" && n>=0);
     return arr.length ? Math.min(...arr) : null;
   };
-  const loopsL = useMemo(()=> minLoopsFromHits(isCx3(leftSet)? lHitsCX3 : lHitsGL, isCx3(leftSet)), [leftSet,lHitsCX3,lHitsGL]);
-  const loopsR = useMemo(()=> minLoopsFromHits(isCx3(rightSet)? rHitsCX3 : rHitsGL, isCx3(rightSet)), [rightSet,rHitsCX3,rHitsGL]);
+  const loopsL = useMemo(()=> minLoopsFromHits(isCxMode(leftSet)? lHitsCX3 : lHitsGL, isCxMode(leftSet), posL), [leftSet,lHitsCX3,lHitsGL,posL]);
+  const loopsR = useMemo(()=> minLoopsFromHits(isCxMode(rightSet)? rHitsCX3 : rHitsGL, isCxMode(rightSet), posR), [rightSet,rHitsCX3,rHitsGL,posR]);
 
   /* ====== モーダル状態 ====== */
   const [saveModal, setSaveModal] = useState<{open:boolean; side:"L"|"R"|null; editId?:string|null}>({open:false, side:null, editId:null});
@@ -612,6 +838,113 @@ export default function App() {
     const q = side === "L" ? lQuery : rQuery; // 何も無ければ直近検索
     return tmp.length ? tmp : q;
   };
+
+  /* ================= DL版：ショートカット（Alt+D = CSV / Alt+J = JSON） ================ */
+  const toCsvLine = (arr: string[]) =>
+    arr.map(s => /[",\n]/.test(s) ? `\"${s.replace(/\"/g,'\"\"')}\"` : s).join(",");
+
+  const makeCx3Matrix = (
+    positions: PositionRow[], rowIndexCols: Set<number>, visiblePos?: number[]
+  ) => {
+    const rowsSorted = positions.slice().sort((a,b)=>a.no-b.no);
+    const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
+    const dataCols = allCols.filter(c => !rowIndexCols.has(c));
+    const viewCols = Array.from({ length: 12 }, (_, i) => dataCols[i] ?? null);
+
+    const useCirc = new Set(visiblePos ?? []);
+    const useFilter = useCirc.size > 0;
+
+    const header = ["#"].concat(
+      viewCols.map((_, i) => {
+        const pos = i + 1;
+        if (useFilter && !useCirc.has(pos)) return "";
+        return circledCol(pos);
+      }).filter(Boolean)
+    );
+
+    const body: string[][] = [];
+    for (const r of rowsSorted) {
+      const line: string[] = [String(r.no)];
+      for (let i = 0; i < viewCols.length; i++) {
+        const pos = i + 1;
+        if (useFilter && !useCirc.has(pos)) continue;
+        const colIdx = viewCols[i];
+        const tokens = colIdx ? ((r as any)[`raw${colIdx}`] as string[] | undefined) : undefined;
+        const vals = Array.isArray(tokens) ? tokens : [];
+        line.push(vals.join(" / "));
+      }
+      body.push(line);
+    }
+    return { header, body };
+  };
+
+  const downloadBlob = (fileName: string, content: string, mime = "text/plain;charset=utf-8") => {
+    const blob = new Blob([content], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey) return;
+      const onLeft  = route === "leftResults";
+      const onRight = route === "rightResults";
+      if (!onLeft && !onRight) return;
+
+      const side = onLeft ? "L" : "R";
+      const setKey = onLeft ? leftSet : rightSet;
+      const cxMode = isCxMode(setKey);
+
+      if (e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        if (cxMode) {
+          const positions = onLeft ? posL : posR;
+          const rowIdx    = onLeft ? rowIdxL : rowIdxR;
+          const visible   = onLeft ? visColsCx3L : visColsCx3R;
+          const { header, body } = makeCx3Matrix(positions, rowIdx, visible);
+          const csv = [toCsvLine(header), ...body.map(toCsvLine)].join("\n");
+          downloadBlob(`${setKey}_${side}.csv`, csv, "text/csv;charset=utf-8");
+        } else {
+          // GLモード（保険）：簡易CSV
+          const idx = onLeft ? leftIdx : rightIdx;
+          const maxRow = Math.max(idx.maxRow, 100);
+          const cols = Array.from({ length: 12 }, (_, i) => i + 1);
+          const header = ["#", ...cols.map(String)];
+          const body: string[][] = [];
+          for (let r = 1; r <= maxRow; r++) {
+            const line = [String(r)];
+            for (const c of cols) {
+              const cell = (idx.byCyl[side as "L"|"R"][c] || []).find((x:any)=>x.row===r);
+              line.push(typeof cell?.num === "number" ? String(cell.num) : "");
+            }
+            body.push(line);
+          }
+          const csv = [toCsvLine(header), ...body.map(toCsvLine)].join("\n");
+          downloadBlob(`${setKey}_${side}.csv`, csv, "text/csv;charset=utf-8");
+        }
+      }
+
+      if (e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        if (isCxMode(onLeft ? leftSet : rightSet)) {
+          const positions = onLeft ? posL : posR;
+          const rowIdx    = onLeft ? rowIdxL : rowIdxR;
+          const visible   = onLeft ? visColsCx3L : visColsCx3R;
+          const { header, body } = makeCx3Matrix(positions, rowIdx, visible);
+          const obj = { set: onLeft ? leftSet : rightSet, side, header, rows: body };
+          downloadBlob(`${(onLeft?leftSet:rightSet)}_${side}.json`, JSON.stringify(obj, null, 2), "application/json");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [route, leftSet, rightSet, posL, posR, rowIdxL, rowIdxR, visColsCx3L, visColsCx3R, leftIdx, rightIdx]);
+
+  /* ================= /DL版 ================= */
 
   return (
     <main className="app">
@@ -861,17 +1194,26 @@ export default function App() {
           )}
 
           <ResultList
-            hits={(isCx3(leftSet) ? lHitsCX3 : lHitsGL) as any}
-            getLines={isCx3(leftSet) ? buildLinesForHit : undefined}
+            hits={(isCxMode(leftSet) ? lHitsCX3 : lHitsGL) as any}
+            getLines={
+              isCxMode(leftSet)
+                ? ((h)=>buildLinesForHit(
+                      h,
+                      posL,
+                      rarityStrictFor(leftSet),  // ← 左側のセット用辞書
+                      nameLooseFor(leftSet)
+                    ))
+                : undefined
+            }
           />
 
           <div style={{ marginTop:12 }}>
-            {isCx3(leftSet)
+            {isCxMode(leftSet)
               ? <GridCx3
-                  positions={cx3Pos}
-                  rowIndexCols={rowIndexCols}
-                  getRarityForKey={rarityByTokenStrict}
-                  getNameForKey={getNameByTokenStrict}
+                  positions={posL}
+                  rowIndexCols={rowIdxL}
+                  getRarityForKey={rarityStrictFor(leftSet)}
+                  getNameForKey={nameLooseFor(leftSet)}
                   highlight={hlCx3L}
                   visibleCols={visColsCx3L}
                 />
@@ -905,17 +1247,26 @@ export default function App() {
           )}
 
           <ResultList
-            hits={(isCx3(rightSet) ? rHitsCX3 : rHitsGL) as any}
-            getLines={isCx3(rightSet) ? buildLinesForHit : undefined}
+            hits={(isCxMode(rightSet) ? rHitsCX3 : rHitsGL) as any}
+            getLines={
+              isCxMode(rightSet)
+                ? ((h)=>buildLinesForHit(
+                      h,
+                      posR,
+                      rarityStrictFor(rightSet), // ← 右側のセット用辞書
+                      nameLooseFor(rightSet)
+                    ))
+                : undefined
+            }
           />
 
           <div style={{ marginTop:12 }}>
-            {isCx3(rightSet)
+            {isCxMode(rightSet)
               ? <GridCx3
-                  positions={cx3Pos}
-                  rowIndexCols={rowIndexCols}
-                  getRarityForKey={rarityByTokenStrict}
-                  getNameForKey={getNameByTokenStrict}
+                  positions={posR}
+                  rowIndexCols={rowIdxR}
+                  getRarityForKey={rarityStrictFor(rightSet)}
+                  getNameForKey={nameLooseFor(rightSet)}
                   highlight={hlCx3R}
                   visibleCols={visColsCx3R}
                 />
@@ -1042,7 +1393,8 @@ function ResultList({ hits, getLines }:{
               <div className="meta">
                 {Array.isArray(h.nextLRMany) && h.nextLRMany.length
                   ? <>次: <strong>{h.nextLRMany.join("/")}</strong></>
-                  : <>（あと <strong>{h.nextLRSteps ?? 0}</strong> 回です）</>}
+                  : <>（あと <strong>{h.nextLRSteps ?? 0}</strong> 回です）</>
+                }
               </div>
             )}
           </div>
@@ -1104,9 +1456,12 @@ function Grid({ byCyl, maxRow, highlightCells, cylinder, visibleCols }:{
                 const cell = (show[c] || []).find((x:any)=>x.row===row);
                 const isHL = highlightCells?.has?.(`${c}:${row}`);
                 const num = cell?.num;
+                const rar = String(cell?.rarity || "").toUpperCase();
+                // GL側も PDF準拠で N以外は着色
+                const bg = rar ? colorForRarity(rar) : "#FFFFFF";
                 return (
                   <td key={c} className={`cell ${isHL?"hl":""}`}
-                      style={{ background: colorForRarity(cell?.rarity) }}>
+                      style={{ background: bg || "#FFFFFF" }}>
                     {typeof num === "number" ? num : ""}
                   </td>
                 );
@@ -1139,11 +1494,14 @@ function GridCx3({
   const renderTokenLine = (raw: string) => {
     const key   = toHalf(String(raw)).toUpperCase();
     const name  = getNameForKey?.(key) || "";
-    const rarRaw = (getRarityForKey?.(key) || "").toUpperCase();
-    const isP   = SPECIAL_P.has(key);
-    const label = isP ? "LR★" : (rarRaw || "N");
-    const bg = isP ? "#B388FF" : (label === "N" ? "#FFFFFF" : colorForRarity(label));
-    const fg = bg === "#FFFFFF" ? "#111" : "#fff";
+    const rarRaw = getRarityForKey?.(key) || "";
+    const rar = normalizeRarity(rarRaw).toUpperCase();
+    const isP = SPECIAL_P.has(key);
+    const label = isP ? "LR★" : (rar || "N");
+    const bg = shouldTint(key, rar) ? colorForToken(key, rar) : "#FFFFFF";
+
+    const fg = "#111";   // ← 固定の濃い文字色に
+
     const text = `${raw} [${label}]${name ? ` ${name}` : ""}`;
 
     return (
@@ -1180,7 +1538,9 @@ function GridCx3({
                 const vals = Array.isArray(tokens) ? tokens : [];
                 const isMono = vals.length === 1;
                 const token = vals[0];
-                const rarKey = isMono ? getRarityForKey(token!) : undefined;
+                const rarKey = (isMono && typeof getRarityForKey === "function")
+                  ? getRarityForKey(token!)
+                  : undefined;
                 const isHL = colIdx ? highlight?.has?.(`${colIdx}:${r.no}`) : false;
 
                 if (singlePos && pos === singlePos) {
@@ -1201,11 +1561,8 @@ function GridCx3({
 
                 const monoBg = ((): string => {
                   if (!isMono) return "#FFFFFF";
-                  const t = toHalf(String(token)).toUpperCase();
-                  if (SPECIAL_P.has(t)) return "#B388FF";
-                  const rarUpper = (rarKey || "").toUpperCase();
-                  if (!rarUpper || rarUpper === "N") return "#FFFFFF";
-                  return colorForRarity(rarUpper);
+                  const rarUpper = normalizeRarity(rarKey || "").toUpperCase();
+                  return shouldTint(token!, rarUpper) ? colorForToken(token!, rarUpper) : "#FFFFFF";
                 })();
 
                 const baseStyle: React.CSSProperties = {
@@ -1226,11 +1583,12 @@ function GridCx3({
                     ) : (
                       <div style={{ display:"grid", gap:2, background:"#FFFFFF", justifyItems:"stretch" }}>
                         {vals.map((k, idx) => {
-                          const t = toHalf(String(k)).toUpperCase();
-                          const rarUpper = ((getRarityForKey(t) || "")).toUpperCase();
-                          const bg = SPECIAL_P.has(t) ? "#B388FF" :
-                                     (!rarUpper || rarUpper === "N") ? "#FFFFFF" : colorForRarity(rarUpper);
-                          const fg = bg === "#FFFFFF" ? "#111" : "#fff";
+                          const t   = toHalf(String(k)).toUpperCase();
+                          const rar = normalizeRarity(getRarityForKey?.(t) || "").toUpperCase();
+                          const bg  = shouldTint(t, rar) ? colorForToken(t, rar) : "#FFFFFF";
+
+                          const fg = "#111";
+
                           return (
                             <div key={idx}
                               style={{ display:"block", padding:"0 2px", borderRadius:3, fontSize:10, lineHeight:1.3,
@@ -1348,7 +1706,7 @@ function SaveMemoModal({
             style={{ width:"100%", height:32, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6, marginBottom:8 }}
           />
 
-        <textarea
+          <textarea
             value={memo}
             onChange={(e)=>setMemo(e.target.value.slice(0,128))}
             placeholder="（任意・128文字まで）"
@@ -1423,6 +1781,7 @@ main.app .header::before{
   position:absolute !important; z-index:0 !important; top:0 !important; bottom:0 !important;
   left:  calc(50% - 50vw - 1px) !important;
   right: calc(50% - 50vw - 1px) !important;
+<<<<<<< HEAD
   background:linear-gradient(
     90deg,
     #2AD6E7 0%,
@@ -1431,17 +1790,23 @@ main.app .header::before{
   ) !important;
 }
 
+main.app .header::before{
+  content:"" !important;
+  position:absolute !important; z-index:0 !important; top:0 !important; bottom:0 !important;
+  left:  calc(50% - 50vw - 1px) !important;
+  right: calc(50% - 50vw - 1px) !important;
+  background:linear-gradient(90deg,#2AD6E7 0%,#0BB1DF 50%,#0A9FDE 100%) !important;
+}
+
 main.app .header > h1{
   position:relative !important; z-index:1 !important;
-  /* ↓ flex はやめて、ブロック＋中央寄せに */
   display:block !important;
   width:100% !important;
   margin:0 auto !important;
-  padding:22px 14px !important; /* 太さはお好みで（例: 22 → 28 など） */
+  padding:22px 14px !important;
   text-align:center !important;
   color:#fff !important; background:transparent !important; border-radius:0 !important;
 }
-
 
 
 /* ← “左シリンダー結果” など、ヘッダー直後のカードだけ 1段下げ */
@@ -1453,7 +1818,7 @@ main.app > .header + .card{ margin-top:12px !important; }
 /* ==== 行間・フォーム ==== */
 .select-row{ display:flex; align-items:center; gap:12px !important; }
 .select-row + .select-row{ margin-top:16px !important; }
-.card .select-row.center-row{ margin-top:16px !important; margin-bottom:16px !important; }
+.card .select-row.center-row{ margin-top:16px !重要; margin-bottom:16px !important; }
 .card + .card{ margin-top:18px !important; }
 
 /* セレクト幅ガチ固定 */
@@ -1471,7 +1836,13 @@ main.app > .header + .card{ margin-top:12px !important; }
   min-width:0 !important; width:${SEL_FIXED_PX}px !important; max-width:${SEL_FIXED_PX}px !important;
   height:var(--ctrl-h) !important; font-size:16px !important;
   box-sizing:content-box !important; appearance:none !important; -webkit-appearance:none !important; -moz-appearance:none !important;
+
+  border:0 !important;                 /* ★ 内側ボーダーを消す */
+  outline:none !important;              /* ★ フォーカス枠を消す（必要なら） */
+  background:transparent !important;    /* ★ 背景はラッパー側に任せる */
+  box-shadow:none !important;           /* ★ UAの内側シャドウを無効化 */
 }
+<<<<<<< HEAD
 /* === CX3 セレクトの二重枠を解消（このブロックを追記） === */
 .select-wrap{
   /* 外側の1本だけ表示 */
@@ -1495,6 +1866,8 @@ main.app > .header + .card{ margin-top:12px !important; }
   box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
   outline: none !important;
 }
+=======
+>>>>>>> b1a84b7 (UI調整とCX4関連ファイル追加)
 
 select::-ms-expand{ display:none; }
 
@@ -1528,6 +1901,7 @@ select::-ms-expand{ display:none; }
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 
+<<<<<<< HEAD
 /* === 二重枠対策：フォーカスのアウトライン/影を除去 + 枠幅を統一 === */
 button, .btn, input, select { outline:none !important; box-shadow:none !important; }
 button:focus, button:focus-visible, button:active,
@@ -1540,6 +1914,8 @@ select:focus, select:focus-visible { outline:none !important; box-shadow:none !i
 /* アウトラインボタンも最終的に 1px へ（上の指定が勝つ）*/
 .btn-outline-blue { border-width:1px !important; }
 
+=======
+>>>>>>> b1a84b7 (UI調整とCX4関連ファイル追加)
 /* ==== 結果表示 ==== */
 .res-list{ display:grid; gap:10px; margin-top:8px; }
 .res-summary{ margin:0; font-size:14px; }
@@ -1598,11 +1974,10 @@ select:focus, select:focus-visible { outline:none !important; box-shadow:none !i
   width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25); }
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
-.modal-x{ margin-left:auto; background:transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
+.modal-x{ margin-left:auto; background:透明; border:0; font-size:22px; line-height:1; cursor:pointer; }
 .modal-content{ padding:12px 14px; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 `;
-
 /* 上方向の余白を食い込む（親の padding-top を無効化） */
 const eatTopPadding = () => {
   const app = document.querySelector('main.app') as HTMLElement | null;
@@ -1622,6 +1997,7 @@ if (document.readyState === 'loading') {
 window.addEventListener('resize', eatTopPadding, { passive:true });
 new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
+
 
 /* === 幅ロック：後からCSSが当たっても常に上書き === */
 (function lockSelectWidthForever(){
@@ -1668,3 +2044,5 @@ new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:t
     document.addEventListener('DOMContentLoaded', ensure, { once:true });
   } else { ensure(); }
 })();
+
+// ---- EOF ----

@@ -1,36 +1,81 @@
-// PDF寄りの濃いめ配色 & P/N 規則は App 側で上書き（03P/09P/37P=紫）する
-export const RARITY_COLORS: Record<string, { bg: string; fg: string }> = {
-  "LR★": { bg: "#B388FF", fg: "#111" }, // 紫（濃いめ）
-  LR:     { bg: "#FF6B6B", fg: "#111" }, // 赤
-  SR:     { bg: "#FFD43B", fg: "#111" }, // 黄
-  R:      { bg: "#6EC1FF", fg: "#111" }, // 水
-  N:      { bg: "#FFFFFF", fg: "#111" }, // 白（※Nは白で固定）
-  CP:     { bg: "#A6EE7A", fg: "#111" }, // 黄緑
-  P_PA:   { bg: "#FFA552", fg: "#111" }, // オレンジ（P系：R_PA / P_PA など）
-  OTHER:  { bg: "#DDD6FE", fg: "#111" },
+// src/lib/rarity.ts
+export const toHalf = (s: string): string =>
+  s
+    .replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/　/g, " ")
+    .replace(/－/g, "-");
+
+// ===== PDF/CX3 完全準拠パレット =====
+// LR=赤, LRP=紫, CP=緑, CPP=橙, SR=黄, SRP=橙, R=水色, N=白
+export type RarityKey = "LR" | "LR★" | "SR" | "SR★" | "R" | "CP" | "CP★" | "N";
+
+export const RARITY_COLORS: Record<RarityKey, string> = {
+  LR:    "#FF3C3C", // 赤
+  "LR★": "#A03CFF", // 紫（LRP）
+  CP:    "#A0FFA0", // 薄緑
+  "CP★": "#FF7F29", // 橙（CPP）
+  SR:    "#FFFFA0", // 薄黄
+  "SR★": "#FF7F29", // 橙（SRP）
+  R:     "#A0FFFF", // 水色
+  N:     "#FFFFFF", // 白
 };
 
-export const HIT_OUTLINE = "#EF4444";
+// 表記ゆれ/同義語 → 正規キー
+const ALIASES: Record<string, RarityKey> = {
+  // LRP
+  "LRP": "LR★", "LR_P": "LR★", "LR★": "LR★",
+  // SRP
+  "SRP": "SR★", "SR_P": "SR★", "SR★": "SR★", "PA": "SR★",
+  // CPP
+  "CPP": "CP★", "CP_P": "CP★", "CP★": "CP★",
 
-// 全角→半角・大文字化
-export const toHalf = (s: string) =>
-  (s ?? "")
-    .replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/\u3000/g, " ")
-    .trim();
+  // ベース
+  "LR": "LR", "SR": "SR", "R": "R", "CP": "CP",
+  "N": "N", "NORM": "N", "NORMAL": "N", "0": "N",
+};
 
-export const K = (s: string) => toHalf(s).toUpperCase();
+// 文字列の中から「LR|SR|CP|R ＋ 隣接の P/★」だけを抽出
+const TOKEN_RE = /(LR|SR|CP|R)(?:\s*(?:P|★))?/i;
 
-// レア名→色（未知は OTHER）
-export function colorForRarity(rar?: string): string {
-  const r = K(rar || "");
-  if (r.startsWith("LR★")) return RARITY_COLORS["LR★"].bg;
-  if (r.startsWith("LR"))  return RARITY_COLORS.LR.bg;
-  if (r.startsWith("SR"))  return RARITY_COLORS.SR.bg;
-  // P系（R_PA, P_PA など）は R より先に判定
-  if (r.includes("_PA"))   return RARITY_COLORS.P_PA.bg;
-  if (r === "R" || r.startsWith("R")) return RARITY_COLORS.R.bg;
-  if (r === "N")  return RARITY_COLORS.N.bg;   // N は白
-  if (r === "CP") return RARITY_COLORS.CP.bg;
-  return RARITY_COLORS.OTHER.bg;
+export const normalizeRarity = (raw?: string): RarityKey => {
+  if (!raw) return "N";
+
+  // 半角化＆整形
+  const s0 = toHalf(String(raw)).toUpperCase().trim();
+  const s1 = s0.replace(/\s+|_/g, "");
+
+  // 1) 直接一致
+  if ((RARITY_COLORS as any)[s0]) return s0 as RarityKey;
+  if ((RARITY_COLORS as any)[s1]) return s1 as RarityKey;
+
+  // 2) エイリアス一致
+  if (ALIASES[s0]) return ALIASES[s0];
+  if (ALIASES[s1]) return ALIASES[s1];
+
+  // 3) テキストから厳密抽出（隣接しているときだけ P/★ を認める）
+  const m = s0.match(TOKEN_RE);
+  if (m) {
+    const base = m[1] as "LR" | "SR" | "CP" | "R";
+    const withP = /P|★/i.test(m[0]); // 抽出された“同じトークン内”に P/★ があるか
+    return (withP ? (base + "★") : base) as RarityKey;
+  }
+
+  // それ以外は N
+  return "N";
+};
+
+export const colorForRarity = (raw?: string): string =>
+  RARITY_COLORS[normalizeRarity(raw)];
+
+// ===== DevTools 用のデバッグフック =====
+declare global { interface Window { __rar?: any; debugRarity?: (raw: string) => any } }
+if (typeof window !== "undefined") {
+  window.__rar = window.__rar || {};
+  window.__rar.colorForRarity = colorForRarity;
+  window.__rar.normalizeRarity = normalizeRarity;
+  window.__rar.toHalf = toHalf;
+  window.debugRarity = (raw: string) => {
+    const norm = normalizeRarity(raw);
+    return { input: raw, norm, color: colorForRarity(raw) };
+  };
 }
