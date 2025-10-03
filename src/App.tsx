@@ -9,6 +9,31 @@ import { colorForRarity, toHalf } from "./lib/rarity";
 
 /** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
 const SEL_FIXED_PX = 86;
+/* ========= セット辞書レジストリ（土台） ========= */
+// 例: "CX3" / "CX-4" / "xc5" などから「CX3」「CX4」「CX5」に正規化
+const parseSetFamily = (setKey: string): string => {
+  const k = String(setKey).toUpperCase();
+  const m = k.match(/CX[-_]?(\d+)/i);
+  return m ? `CX${m[1]}` : k;  // マッチしなければそのまま
+};
+
+type Dicts = {
+  rarity: Map<string, string>;
+  name:   Map<string, string>;
+  specialP: Set<string>;
+};
+const REGISTRY = new Map<string, Dicts>();
+
+const getDicts = (setKey: string): Dicts => {
+  const fam = parseSetFamily(setKey);
+  return REGISTRY.get(fam)
+      || REGISTRY.get("COMMON")
+      || { rarity: new Map(), name: new Map(), specialP: new Set() };
+};
+const setRegistry = (family: string, dicts: Dicts) => {
+  REGISTRY.set(parseSetFamily(family), dicts);
+};
+
 
 /* ========= ユーティリティ ========= */
 const abs = (path: string) => {
@@ -68,7 +93,6 @@ const shouldTint = (token: string, rarityUpper?: string): boolean => {
   return r !== "" && r !== "N";
 };
 
-// ← shouldTint() の直後に追加
 // ← shouldTint() の直後に差し替え
 const normalizeRarity = (raw?: string): string => {
   const s0 = toHalf(String(raw || "")).toUpperCase().trim();
@@ -142,7 +166,8 @@ const nav = (r: Route) => { location.hash = "/" + r; };
 const isCxMode = (setKey: string) => /CX[34]|XC[34]|CX-[34]/i.test(setKey);
 
 /* ========= 永続保存（複数件対応 / localStorage） ========= */
-export type SavedEntry = { id: string; pattern: number[]; memo: string; ts: number };
+export type SavedEntry = { id: string; pattern: number[]; memo: string; ts: number; rev?: boolean };
+
 const listKey = (side:"L"|"R", setKey:string) => `legends:savedList:${setKey}:${side}`;
 
 // 旧仕様(単一保存)からの移行用
@@ -172,19 +197,24 @@ function loadSavedList(side:"L"|"R", setKey:string): SavedEntry[] {
 function saveSavedList(side:"L"|"R", setKey:string, list:SavedEntry[]){
   try{ localStorage.setItem(listKey(side,setKey), JSON.stringify(list)); }catch{}
 }
-function addSavedEntry(side:"L"|"R", setKey:string, pattern:number[], memo:string){
+function addSavedEntry(side:"L"|"R", setKey:string, pattern:number[], memo:string, rev:boolean = false){
   const list = loadSavedList(side,setKey);
   const ent: SavedEntry = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
-    pattern: [...pattern], memo: memo.slice(0,128), ts: Date.now()
+    pattern: [...pattern], memo: memo.slice(0,128), ts: Date.now(), rev
   };
   saveSavedList(side,setKey, [ent, ...list]);
 }
-function updateSavedEntry(side:"L"|"R", setKey:string, id:string, patch:Partial<Pick<SavedEntry,"pattern"|"memo">>){
+
+function updateSavedEntry(
+  side:"L"|"R", setKey:string, id:string,
+  patch:Partial<Pick<SavedEntry,"pattern"|"memo"|"rev">>
+){
   const list = loadSavedList(side,setKey);
   const next = list.map(x=> x.id===id ? { ...x, ...patch, ts: Date.now() } : x);
   saveSavedList(side,setKey, next);
 }
+
 function removeSavedEntry(side:"L"|"R", setKey:string, id:string){
   const list = loadSavedList(side,setKey);
   saveSavedList(side,setKey, list.filter(x=>x.id!==id));
@@ -382,86 +412,76 @@ export default function App() {
         }catch{}
       }
 
-      setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
-      setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
-      setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
+      // （既存）
+setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
+setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
+setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
+
+// ★ ここから3行を追加（REGISTRY へ登録）
+setRegistry("COMMON", { rarity: mpCommonR, name: mpCommonN, specialP: SPECIAL_P });
+setRegistry("CX3",    { rarity: mpCX3R,    name: mpCX3N,    specialP: SPECIAL_P });
+setRegistry("CX4",    { rarity: mpCX4R,    name: mpCX4N,    specialP: SPECIAL_P });
+// ★ ここまで
+
     }catch(e){ console.warn("cards csv 読込失敗:", e); }
   })() }, []);
 
-  const nameByTokenLoose = (rawToken: string): string | undefined => {
-    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
-    if (cx3KeyName.has(t)) return cx3KeyName.get(t);
-    for (const k of deriveKeys(t)) {
-      const n = cx3KeyName.get(k);
-      if (n) return n;
-    }
-    return undefined;
-  };
+  
   // 置き換え版（SPECIAL_P を最優先）
-  const rarityByTokenStrict = (rawToken: string): string | undefined => {
-    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+
 
     // （確認用ログ。不要なら消してOK）
-    if ((window as any).__DBG_LOG !== false) console.debug("[rarityByTokenStrict]", t);
-
-    // ★ SPECIAL_P は常に LR★（辞書より優先）
-    if (SPECIAL_P.has(t)) return "LR★";
-
-    // 辞書ヒット → 数値/ゼロ埋め/P有無を補完して検索
-    if (cx3KeyRarity.has(t)) return cx3KeyRarity.get(t);
-    const m = t.match(/^(\d+)(P)?$/);
-    if (!m) return undefined;
-    const n  = String(parseInt(m[1],10));
-    const n2 = n.padStart(2,"0");
-    const wantP = !!m[2];
-    if (wantP) return cx3KeyRarity.get(`${n}P`) || cx3KeyRarity.get(`${n2}P`);
-    return cx3KeyRarity.get(n) || cx3KeyRarity.get(n2);
-  };
-
-  const getRarityByTokenStrict = (k:string) => rarityByTokenStrict(k);
-  const getNameByTokenStrict   = (k:string) => nameByTokenLoose(k);
+    
   // ← deriveKeys の直下に貼る
-  const rarityStrictFor = (setKey: string) => (rawToken: string) => {
-    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
-    if (SPECIAL_P.has(t)) return "LR★";
+  // ← deriveKeys の直下：REGISTRY（getDicts）経由に差し替え
+const rarityStrictFor = (setKey: string) => (rawToken: string) => {
+  const t = toHalf(String(rawToken || "")).toUpperCase().trim();
 
-    const pick = /CX4|XC4|CX-4/i.test(setKey)
-      ? cx4KeyRarity
-      : /CX3|XC3|CX-3/i.test(setKey)
-        ? cx3KeyRarity
-        : commonKeyRarity;
+  // 対象セットの辞書（COMMON フォールバックは getDicts 側）
+  const { rarity, specialP } = getDicts(setKey);
 
-    if (pick.has(t)) return pick.get(t)!;
+  // SPECIAL_P は常に LR★ 優先
+  if (specialP.has(t)) return "LR★";
 
-    const m = t.match(/^(\d+)(P)?$/);
-    if (m) {
-      const n  = String(parseInt(m[1],10));
-      const n2 = n.padStart(2,"0");
-      const wantP = !!m[2];
-      if (wantP) return pick.get(`${n}P`) || pick.get(`${n2}P`);
-      return pick.get(n) || pick.get(n2) || undefined;
-    }
+  // 完全一致
+  if (rarity.has(t)) return rarity.get(t)!;
 
-    if (commonKeyRarity.has(t)) return commonKeyRarity.get(t);
-    return undefined;
-  };
+  // 数字/P/ゼロ埋め補完
+  const m = t.match(/^(\d+)(P)?$/);
+  if (m) {
+    const n  = String(parseInt(m[1], 10));
+    const n2 = n.padStart(2, "0");
+    const wantP = !!m[2];
+    if (wantP) return rarity.get(`${n}P`) || rarity.get(`${n2}P`) || undefined;
+    return rarity.get(n) || rarity.get(n2) || undefined;
+  }
 
-  const nameLooseFor = (setKey: string) => (rawToken: string) => {
-    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
-    const pick = /CX4|XC4|CX-4/i.test(setKey)
-      ? cx4KeyName
-      : /CX3|XC3|CX-3/i.test(setKey)
-        ? cx3KeyName
-        : commonKeyName;
+  // 最後に COMMON を保険
+  const { rarity: commonRarity } = getDicts("COMMON");
+  if (commonRarity.has(t)) return commonRarity.get(t);
 
-    if (pick.has(t)) return pick.get(t);
-    for (const k of deriveKeys(t)) {
-      const n = pick.get(k) || commonKeyName.get(k);
-      if (n) return n;
-    }
-    return undefined;
-  };
+  return undefined;
+};
 
+const nameLooseFor = (setKey: string) => (rawToken: string) => {
+  const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+
+  // セット名辞書＆COMMON 名辞書
+  const { name } = getDicts(setKey);
+  const { name: commonName } = getDicts("COMMON");
+
+  // 完全一致
+  if (name.has(t)) return name.get(t);
+
+  // 派生キー（7/07/7P/07P など）で探索
+  for (const k of deriveKeys(t)) {
+    const n = name.get(k) || commonName.get(k);
+    if (n) return n;
+  }
+  return undefined;
+};
+
+  
   /* ===== 位置 CSV（CX3 / CX4） ===== */
 
   // 行番号列（インデックス列）を検出する共通関数
@@ -660,83 +680,119 @@ export default function App() {
   const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
   const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
-  // 候補
-  type Candidate = { code:string; name:string; dist:number; color:string; badge:"LR"|"LR★" };
+  
 
-  const buildLinesForHit = (
-    hit: Cx3Hit,
-    positions: PositionRow[],
-    getRarityForKey?: (key: string) => string | undefined,
-    getNameForKey?:   (key: string) => string | undefined
-  ): Candidate[] => {
-    // 引数が来ない呼び出し用のフォールバック
-    const rarFn  = (typeof getRarityForKey === "function") ? getRarityForKey : (() => undefined);
-    const nameFn = (typeof getNameForKey   === "function") ? getNameForKey   : (() => undefined);
+  // 候補（※既存の type Candidate はそのまま使います）
+const buildLinesForHit = (
+  hit: Cx3Hit,
+  positions: PositionRow[],
+  getRarityForKey?: (key: string) => string | undefined,
+  getNameForKey?:   (key: string) => string | undefined
+): Candidate[] => {
+  const rarFn  = (typeof getRarityForKey === "function") ? getRarityForKey : (() => undefined);
+  const nameFn = (typeof getNameForKey   === "function") ? getNameForKey   : (() => undefined);
 
-    const col = hit.col;
-    const start = hit.row;
-    const rowMap = new Map<number, PositionRow>(positions.map(r => [r.no, r]));
-    const allNos = positions.map(r => r.no);
-    const maxRowNo = allNos.length ? Math.max(...allNos) : 0;
-    const minRowNo = allNos.length ? Math.min(...allNos) : 1;
-
-    // 直前にある
-    const firstDist = new Map<string, number>();
-    const classByToken = new Map<string, "LR" | "LR★">();
-
-    const stepForward = (rr:number, base:number) => {
-      const row = rowMap.get(rr);
-      const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
-      if (!Array.isArray(tokens) || tokens.length === 0) return;
-
-      for (const raw of tokens) {
-        const t   = String(raw).toUpperCase();
-        const rar = (rarFn(t) || "").toUpperCase();
-
-        // LR系は全部拾う（LR, LR*, LRP, LR★）／SPECIAL_Pは常に対象
-        const isLrAny = /^LR/.test(rar) || SPECIAL_P.has(t);
-        if (!isLrAny) continue;
-
-        if (!firstDist.has(t)) firstDist.set(t, Math.abs(rr - base));
-
-        // バッジ（紫 or 赤）をここで確定・記録しておく
-        const cls: "LR" | "LR★" = (SPECIAL_P.has(t) || rar === "LR★") ? "LR★" : "LR";
-        if (!classByToken.has(t)) classByToken.set(t, cls);
-      }
-    };
-
-    if (hit.dir === "down") {
-      for (let rr = start + 1; rr <= maxRowNo; rr++) {
-        stepForward(rr, start);
-        if (firstDist.size >= MAX_LR_CANDIDATES) break;
-      }
-    } else {
-      for (let rr = start - 1; rr >= minRowNo; rr--) {
-        stepForward(rr, start);
-        if (firstDist.size >= MAX_LR_CANDIDATES) break;
-      }
-    }
-
-    // items 作成ブロックをこれに差し替え
-    const items: Candidate[] = [];
-    firstDist.forEach((dist, t) => {
-      // stepForward で記録したクラスを最優先で使う
-      const cls: "LR" | "LR★" =
-        classByToken.get(t) ??
-        ((SPECIAL_P.has(t) || ((rarFn(t) || "").toUpperCase() === "LR★")) ? "LR★" : "LR");
-
-      const name = nameFn(t) || t;
-      items.push({
-        code: t,
-        name,
-        dist,
-        color: colorForRarity(cls === "LR★" ? "LR★" : "LR"),
-        badge: cls,
-      });
-    });
-
-    return items.sort((a,b) => a.dist - b.dist).slice(0, MAX_LR_CANDIDATES);
+  // 表示は元の見た目を優先しつつ、内部比較はゼロ埋め差を吸収する
+  const normCode = (raw: string) => {
+    const t = toHalf(String(raw)).toUpperCase().trim();
+    const m = t.match(/^0*(\d{1,3})(P?)$/);
+    return m ? (String(parseInt(m[1],10)) + (m[2] ? "P" : "")) : t; // 例: "04P" -> "4P"
   };
+
+  // レア判定（LRPかどうかとバッジ）
+  const judge = (keyRaw: string) => {
+    const key = toHalf(String(keyRaw)).toUpperCase().trim();   // 例: "04P"
+    const isP = /^\d+P$/.test(key);
+    const baseKey = isP ? key.slice(0, -1) : key;
+
+    const pNorm    = normalizeRarity(rarFn(key)     || "").toUpperCase(); // "", "LR★", "SR★", ...
+    const baseNorm = normalizeRarity(rarFn(baseKey) || "").toUpperCase(); // "", "LR", ...
+
+    const special  = SPECIAL_P.has(key);
+    const isLRAny  = special || pNorm.startsWith("LR") || baseNorm === "LR";
+    const isLRP    = isP && !special && (pNorm === "LR★" || baseNorm === "LR"); // ← LRP定義
+
+    const badge: "LR" | "LR★" = (special || isLRP || pNorm === "LR★") ? "LR★" : "LR";
+    return { isLRAny, isLRP, badge };
+  };
+
+  const col = hit.col;
+  const start = hit.row;
+
+  const rowMap  = new Map<number, PositionRow>(positions.map(r => [r.no, r]));
+  const allNos  = positions.map(r => r.no);
+  const maxRowNo = allNos.length ? Math.max(...allNos) : 0;
+  const minRowNo = allNos.length ? Math.min(...allNos) : 1;
+
+  // 収集（最初に見えた距離のみ記録）
+  const firstDistByNorm = new Map<string, number>(); // normCode -> dist
+  const metaByNorm      = new Map<string, {badge:"LR"|"LR★"; isLRP:boolean}>(); // normCode -> 判定
+  const displayKeyByNorm= new Map<string, string>(); // normCode -> 最初に見えた表示用キー（ゼロ埋め保持）
+
+  const scanOneRow = (rr: number, baseRow: number) => {
+    const row = rowMap.get(rr);
+    const tokens = row ? (row as any)[`raw${col}`] as string[] | undefined : undefined;
+    if (!Array.isArray(tokens) || tokens.length === 0) return;
+
+    for (const raw of tokens) {
+      const keyDisp = toHalf(String(raw)).toUpperCase().trim();  // 表示用（"04P" など）
+      const nkey    = normCode(keyDisp);                          // 内部比較用（"4P" など）
+      const j = judge(keyDisp);
+
+      // 候補に載せるのは LR 系だけ（LR / LR★ / SPECIAL_P / 無印LRのP）
+      if (!j.isLRAny) continue;
+
+      if (!firstDistByNorm.has(nkey)) firstDistByNorm.set(nkey, Math.abs(rr - baseRow));
+      if (!metaByNorm.has(nkey))      metaByNorm.set(nkey, { badge: j.badge, isLRP: j.isLRP });
+      if (!displayKeyByNorm.has(nkey)) displayKeyByNorm.set(nkey, keyDisp);
+    }
+  };
+
+  // 列の端まで全走査（方向に合わせて）
+  if (hit.dir === "down") {
+    for (let rr = start + 1; rr <= maxRowNo; rr++) scanOneRow(rr, start);
+  } else {
+    for (let rr = start - 1; rr >= minRowNo; rr--) scanOneRow(rr, start);
+  }
+
+  // アイテム化
+  const items: Candidate[] = [];
+  for (const [nkey, dist] of firstDistByNorm) {
+    const disp = displayKeyByNorm.get(nkey)!;
+    const meta = metaByNorm.get(nkey)!;
+    items.push({
+      code: disp,
+      name: nameFn(disp) || disp,
+      dist,
+      color: colorForRarity(meta.badge === "LR★" ? "LR★" : "LR"),
+      badge: meta.badge,
+    });
+  }
+
+  // 近い順
+  const sorted = items.sort((a, b) => a.dist - b.dist);
+
+  // 直近4件（MAX_LR_CANDIDATES）
+  const top = sorted.slice(0, MAX_LR_CANDIDATES);
+
+  // 直近4件に LRP が無ければ、列全体で最短の LRP を 1件だけ追加
+  const isLRPTop = (c: Candidate) => {
+    const n = normCode(c.code);
+    return !!metaByNorm.get(n)?.isLRP;
+  };
+  const hasLRPInTop = top.some(isLRPTop);
+
+  if (!hasLRPInTop) {
+    const extra = sorted.find(c => isLRPTop(c) && !top.some(t => normCode(t.code) === normCode(c.code)));
+    if (extra) top.push(extra);
+  }
+
+  // 最大5件（= 直近4件 + LRP追加）
+  return top.slice(0, MAX_LR_CANDIDATES + 1);
+};
+
+
+
 
   /* ===== Home 用候補（ルピ付き） ===== */
   type Sug = {
@@ -744,44 +800,88 @@ export default function App() {
     lines?: ReturnType<typeof buildLinesForHit>;
     noHigh?: boolean; nextAny?: number;
   };
-  const buildSuggestions = (pat: number[], setKey: string, direction: "down" | "up" = "down"): Sug[] => {
-    if (!isCxMode(setKey) || !pat.length) return [];
-    const usePos  = /CX4|XC4|CX-4/i.test(setKey) ? cx4Pos : cx3Pos;
-    const useIdx  = /CX4|XC4|CX-4/i.test(setKey) ? rowIndexColsCX4 : rowIndexCols;
-    if (!usePos.length) return [];
-    const hits = buildCx3Hits(usePos, pat, useIdx, direction);
-    const prepared = hits.map(h => {
-      const lines = buildLinesForHit(
-        h,
-        usePos,
-        rarityStrictFor(setKey), // セット依存のレア辞書
-        nameLooseFor(setKey)     // セット依存の名前辞書
-      );
+  // Home 用候補：TOP4 + 必要なら LR★ を 5件目に注入
+const buildSuggestions = (
+  pat: number[],
+  setKey: string,
+  direction: "down" | "up" = "down"
+): Sug[] => {
+  if (!isCxMode(setKey) || !pat.length) return [];
 
-      const score = lines.length ? Math.min(...lines.map(x => x.dist)) : Number.POSITIVE_INFINITY;
-      const nextAny = (typeof h.nextAnySteps === "number") ? h.nextAnySteps : undefined;
-      return { h, lines, score, nextAny };
-    });
+  const usePos = /CX4|XC4|CX-4/i.test(setKey) ? cx4Pos : cx3Pos;
+  const useIdx = /CX4|XC4|CX-4/i.test(setKey) ? rowIndexColsCX4 : rowIndexCols;
+  if (!usePos.length) return [];
 
-    const good = prepared
+  const hits = buildCx3Hits(usePos, pat, useIdx, direction);
+
+  // 候補行（lines）と「最短距離スコア」を用意
+  const prepared = hits.map(h => {
+    const lines = buildLinesForHit(
+      h,
+      usePos,
+      rarityStrictFor(setKey), // セット依存のレア辞書
+      nameLooseFor(setKey)     // セット依存の名前辞書
+    );
+    const score = lines.length
+      ? Math.min(...lines.map(x => x.dist))
+      : Number.POSITIVE_INFINITY;
+    return { h, lines, score };
+  });
+
+  // ① 高レア行があるカードからスコア順でTOP4
+  const top: Array<{ col:number; row:number; lines?: ReturnType<typeof buildLinesForHit>; noHigh?:boolean; nextAny?: number }> =
+    prepared
       .filter(p => p.lines.length > 0)
       .sort((a, b) => a.score - b.score || a.h.col - b.h.col || a.h.row - b.h.row)
       .slice(0, 4)
       .map(p => ({ col: p.h.col, row: p.h.row, lines: p.lines }));
 
-    if (good.length >= 4) return good;
-
+  // ② 4枚に満たなければフィラーで補完（“次に何か出るまで”の短い順）
+  if (top.length < 4) {
     const fillers = prepared
       .filter(p => p.lines.length === 0)
       .sort((a, b) => {
-        const an = (typeof a.nextAny === "number") ? a.nextAny : 999999;
-        const bn = (typeof b.nextAny === "number") ? b.nextAny : 999999;
+        const an = (typeof a.h.nextAnySteps === "number") ? a.h.nextAnySteps : 999999;
+        const bn = (typeof b.h.nextAnySteps === "number") ? b.h.nextAnySteps : 999999;
         return an - bn || a.h.col - b.h.col || a.h.row - b.h.row;
       })
-      .map(p => ({ col: p.h.col, row: p.h.row, noHigh: true, nextAny: p.nextAny }));
+      .map(p => ({ col: p.h.col, row: p.h.row, noHigh: true, nextAny: p.h.nextAnySteps }));
+    top.push(...fillers.slice(0, 4 - top.length));
+  }
 
-    return [...good, ...fillers].slice(0, 4);
-  };
+  // ③ LR★ が全体では存在するのに TOP4 に無いなら、最短 LR★ を 5件目として注入
+  const hasLRStarIn = (arr?: ReturnType<typeof buildLinesForHit>) =>
+    Array.isArray(arr) && arr.some(c => c.badge === "LR★");
+
+  const anyLRStar = prepared.some(p => hasLRStarIn(p.lines));
+  const topHasLRStar = top.some(card => hasLRStarIn(card.lines));
+
+  if (anyLRStar && !topHasLRStar) {
+    // 全 prepared から「LR★行の最短距離」が最小のカードを選ぶ
+    let best: null | { col:number; row:number; lines: ReturnType<typeof buildLinesForHit>; dist:number } = null;
+
+    for (const p of prepared) {
+      const lrstars = (p.lines || []).filter(c => c.badge === "LR★");
+      if (!lrstars.length) continue;
+      const d = Math.min(...lrstars.map(x => x.dist));
+      if (
+        !best ||
+        d < best.dist ||
+        (d === best.dist && (p.h.col < best.col || (p.h.col === best.col && p.h.row < best.row)))
+      ) {
+        best = { col: p.h.col, row: p.h.row, lines: p.lines, dist: d };
+      }
+    }
+
+    if (best && !top.some(t => t.col === best!.col && t.row === best!.row)) {
+      top.push({ col: best.col, row: best.row, lines: best.lines });
+    }
+  }
+
+  // 最大5枚で返す（= 通常4件 + 必要なら LR★ 保険 1件）
+  return top.slice(0, 5);
+};
+
 
   const candSugL = useMemo(
     () => isCxMode(leftSet) ? buildSuggestions(patLNow, leftSet, "down") : [],
@@ -823,7 +923,8 @@ export default function App() {
   const loopsR = useMemo(()=> minLoopsFromHits(isCxMode(rightSet)? rHitsCX3 : rHitsGL, isCxMode(rightSet), posR), [rightSet,rHitsCX3,rHitsGL,posR]);
 
   /* ====== モーダル状態 ====== */
-  const [saveModal, setSaveModal] = useState<{open:boolean; side:"L"|"R"|null; editId?:string|null}>({open:false, side:null, editId:null});
+  const [saveModal, setSaveModal] =
+  useState<{open:boolean; side:"L"|"R"|null; editId?:string|null; rev?:boolean}>({open:false, side:null, editId:null, rev:false});
   const [listModal, setListModal] = useState<{open:boolean; side:"L"|"R"|null}>({open:false, side:null});
   const [savedVersion, setSavedVersion] = useState(0); // 保存変更トリガー
 
@@ -1180,9 +1281,13 @@ export default function App() {
         <section className="card">
           <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
             <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-            <strong>左シリンダー結果</strong>
+            {/* ここを置換 */}
+<strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
+
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L"})}>履歴保存</button>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L", rev: (dirL === "up")})}>履歴保存</button>
+
+
               <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"L"})}>保存一覧</button>
             </div>
           </div>
@@ -1194,18 +1299,13 @@ export default function App() {
           )}
 
           <ResultList
-            hits={(isCxMode(leftSet) ? lHitsCX3 : lHitsGL) as any}
-            getLines={
-              isCxMode(leftSet)
-                ? ((h)=>buildLinesForHit(
-                      h,
-                      posL,
-                      rarityStrictFor(leftSet),  // ← 左側のセット用辞書
-                      nameLooseFor(leftSet)
-                    ))
-                : undefined
-            }
-          />
+  hits={(isCxMode(leftSet) ? lHitsCX3 : lHitsGL) as any}
+  getLines={isCxMode(leftSet)
+    ? (h)=>buildLinesForHit(h, posL, rarityStrictFor(leftSet), nameLooseFor(leftSet))
+    : undefined}
+  isReverse={dirL === "up"}   // ← これを追加
+/>
+
 
           <div style={{ marginTop:12 }}>
             {isCxMode(leftSet)
@@ -1233,9 +1333,13 @@ export default function App() {
         <section className="card">
           <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
             <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-            <strong>右シリンダー結果</strong>
+            {/* ここを置換 */}
+<strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
+
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R"})}>履歴保存</button>
+              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R", rev: (dirR === "up")})}>履歴保存</button>
+
+
               <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"R"})}>保存一覧</button>
             </div>
           </div>
@@ -1247,18 +1351,13 @@ export default function App() {
           )}
 
           <ResultList
-            hits={(isCxMode(rightSet) ? rHitsCX3 : rHitsGL) as any}
-            getLines={
-              isCxMode(rightSet)
-                ? ((h)=>buildLinesForHit(
-                      h,
-                      posR,
-                      rarityStrictFor(rightSet), // ← 右側のセット用辞書
-                      nameLooseFor(rightSet)
-                    ))
-                : undefined
-            }
-          />
+  hits={(isCxMode(rightSet) ? rHitsCX3 : rHitsGL) as any}
+  getLines={isCxMode(rightSet)
+    ? (h)=>buildLinesForHit(h, posR, rarityStrictFor(rightSet), nameLooseFor(rightSet))
+    : undefined}
+  isReverse={dirR === "up"}   // ← これを追加
+/>
+
 
           <div style={{ marginTop:12 }}>
             {isCxMode(rightSet)
@@ -1305,13 +1404,15 @@ export default function App() {
       {/* 追加：保存/編集モーダル（新規 or 既存を編集） */}
       {saveModal.open && saveModal.side && (
         <SaveMemoModal
-          side={saveModal.side}
-          setKey={saveModal.side==="L" ? leftSet : rightSet}
-          pattern={saveModal.side==="L" ? currentPatternFor("L") : currentPatternFor("R")}
-          editId={saveModal.editId ?? undefined}
-          onSaved={()=>setSavedVersion(v=>v+1)}
-          onClose={()=>setSaveModal({open:false, side:null, editId:null})}
-        />
+  side={saveModal.side}
+  setKey={saveModal.side==="L" ? leftSet : rightSet}
+  pattern={saveModal.side==="L" ? currentPatternFor("L") : currentPatternFor("R")}
+  editId={saveModal.editId ?? undefined}
+  onSaved={()=>setSavedVersion(v=>v+1)}
+  onClose={()=>setSaveModal({open:false, side:null, editId:null})}
+  revDefault={!!saveModal.rev}
+/>
+
       )}
 
       <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
@@ -1340,7 +1441,11 @@ function HistoryPanel({ items, onRestore, onDelete, onClear }:{
       {items.map(it=>(
         <div key={it.ts} className="history-row">
           <div>
-            <div><strong>{it.pattern.join(" → ")}</strong>{it.rev ? "（逆順）":""}</div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+  <strong>{it.pattern.join(" → ")}</strong>
+  {it.rev && <span className="rev-badge">逆順</span>}
+</div>
+
             <div className="history-meta">{new Date(it.ts).toLocaleString("ja-JP")}</div>
           </div>
           <div className="history-actions">
@@ -1355,39 +1460,45 @@ function HistoryPanel({ items, onRestore, onDelete, onClear }:{
 }
 
 /* ===== 結果リスト ===== */
-function ResultList({ hits, getLines }:{
+/* ===== 結果リスト ===== */
+function ResultList({ hits, getLines, isReverse = false }:{
   hits: any[],
-  getLines?: (hit:any)=>Array<{code:string; name:string; dist:number; badge:"LR"|"LR★"}>
+  getLines?: (hit:any)=>Array<{code:string; name:string; dist:number; badge:"LR"|"LR★"}>,
+  isReverse?: boolean
 }) {
   if (!hits?.length) return <div className="res-empty">一致はまだありません。</div>;
 
-  const hasCx3 = !!getLines;
+  // ← ここから“return の直前準備ブロック”
+  const hasCx3 = typeof getLines === "function";
 
-  const prepared = hits.map(h => {
-    let lines: Array<{code:string; name:string; dist:number; badge:"LR"|"LR★"}> | undefined;
-    let score = 999999;
+  const prepared = hits
+    .map((h:any) => {
+      const lines = hasCx3 ? (getLines!(h) ?? []) : undefined;
+      const score = hasCx3
+        ? (lines.length ? Math.min(...lines.map(x => x.dist)) : Number.POSITIVE_INFINITY)
+        : (typeof h.nextLRSteps === "number" ? h.nextLRSteps : Number.POSITIVE_INFINITY);
+      return { h, lines, score };
+    })
+    .sort((a,b)=> a.score - b.score || a.h.col - b.h.col || a.h.row - b.h.row);
 
-    if (hasCx3) {
-      lines = getLines!(h) || [];
-      if (lines.length) score = Math.min(...lines.map(l => l.dist));
-    } else {
-      if (typeof h.nextLRSteps === "number") score = h.nextLRSteps;
-    }
-    return { h, lines, score };
-  }).sort((a,b)=> a.score - b.score);
-
-  const top = prepared.slice(0, 4);
+  const topN = prepared.slice(0, 4); // ← ここが “top” の正体
+  // ――― ここまでが追加 ―――
 
   return (
     <div className="res-list">
-      <p className="res-summary">{top.length} 件の最短パターンと一致しました。</p>
+      <p className="res-summary">
+        {topN.length} 件の最短パターンと一致しました。
+        {isReverse && <span className="rev-badge">逆順</span>}
+      </p>
 
-      {top.map(({h, lines}, i) => (
+      {topN.map(({h, lines}, i) => (
         <div key={i} className="res-card">
           <div className="res-head">
             <div className="pos">
               ヒット位置: <strong>{circledCol(h.col)}</strong> の <strong>{h.row}番目</strong>
             </div>
+
+            {isReverse && <span className="rev-badge">逆順</span>}
 
             {!hasCx3 && (
               <div className="meta">
@@ -1399,6 +1510,7 @@ function ResultList({ hits, getLines }:{
             )}
           </div>
 
+          {/* CXモード：候補行 */}
           {hasCx3 && !!lines?.length && (
             <div className="res-lines">
               {lines
@@ -1414,6 +1526,7 @@ function ResultList({ hits, getLines }:{
             </div>
           )}
 
+          {/* CXモード：候補なし */}
           {hasCx3 && !lines?.length && (
             <div className="res-lines">
               <div className="res-line">
@@ -1429,6 +1542,7 @@ function ResultList({ hits, getLines }:{
     </div>
   );
 }
+
 
 function Grid({ byCyl, maxRow, highlightCells, cylinder, visibleCols }:{
   byCyl:any, maxRow:number, highlightCells:Set<string>, cylinder:"L"|"R",
@@ -1636,7 +1750,10 @@ function SavedListModal({
           {list.map(it=>(
             <div key={it.id} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
               <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
-                <strong>{it.pattern.join(" ")}</strong>
+                <strong>{it.pattern.join(" → ")}</strong>
+{it.rev && <span className="rev-badge">逆順</span>}   {/* ここに入れる */}
+
+                
                 <span style={{ marginLeft:"auto", fontSize:12, color:"#64748b" }}>{new Date(it.ts).toLocaleString("ja-JP")}</span>
               </div>
               {it.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{it.memo}</div>}
@@ -1659,8 +1776,13 @@ function SavedListModal({
 
 /* ========= 保存/編集モーダル ========= */
 function SaveMemoModal({
-  side, setKey, pattern, editId, onSaved, onClose
-}:{ side:"L"|"R"; setKey:string; pattern:number[]; editId?:string; onSaved:()=>void; onClose:()=>void }) {
+  side, setKey, pattern, editId, onSaved, onClose, revDefault   // ← ここに追加
+}:{
+  side:"L"|"R"; setKey:string; pattern:number[]; editId?:string;
+  onSaved:()=>void; onClose:()=>void;
+  revDefault?: boolean;                                          // ← ここにも追加
+}) {
+
   const isEdit = !!editId;
   const title = `${isEdit?"履歴編集":"履歴保存"}（${side==="L"?"左":"右"}シリンダー）`;
   const editing = isEdit ? (findSaved(side,setKey, editId!) || null) : null;
@@ -1677,8 +1799,12 @@ function SaveMemoModal({
   const saveNow = () => {
     const pat = parsePattern(patternText);
     if (!pat.length) return;
-    if (isEdit) updateSavedEntry(side,setKey, editId!, { pattern: pat, memo: memo.slice(0,128) });
-    else addSavedEntry(side,setKey, pat, memo);
+    if (isEdit) {
+  updateSavedEntry(side,setKey, editId!, { pattern: pat, memo: memo.slice(0,128) });
+} else {
+  addSavedEntry(side,setKey, pat, memo, !!revDefault); // ★ 第5引数を追加
+}
+
     onSaved();
     onClose();
   };
@@ -1781,20 +1907,6 @@ main.app .header::before{
   position:absolute !important; z-index:0 !important; top:0 !important; bottom:0 !important;
   left:  calc(50% - 50vw - 1px) !important;
   right: calc(50% - 50vw - 1px) !important;
-<<<<<<< HEAD
-  background:linear-gradient(
-    90deg,
-    #2AD6E7 0%,
-    #0BB1DF 50%,
-    #0A9FDE 100%
-  ) !important;
-}
-
-main.app .header::before{
-  content:"" !important;
-  position:absolute !important; z-index:0 !important; top:0 !important; bottom:0 !important;
-  left:  calc(50% - 50vw - 1px) !important;
-  right: calc(50% - 50vw - 1px) !important;
   background:linear-gradient(90deg,#2AD6E7 0%,#0BB1DF 50%,#0A9FDE 100%) !important;
 }
 
@@ -1808,7 +1920,6 @@ main.app .header > h1{
   color:#fff !important; background:transparent !important; border-radius:0 !important;
 }
 
-
 /* ← “左シリンダー結果” など、ヘッダー直後のカードだけ 1段下げ */
 main.app > .header + .card{ margin-top:12px !important; }
 @media (min-width:768px){
@@ -1818,7 +1929,7 @@ main.app > .header + .card{ margin-top:12px !important; }
 /* ==== 行間・フォーム ==== */
 .select-row{ display:flex; align-items:center; gap:12px !important; }
 .select-row + .select-row{ margin-top:16px !important; }
-.card .select-row.center-row{ margin-top:16px !重要; margin-bottom:16px !important; }
+.card .select-row.center-row{ margin-top:16px !important; margin-bottom:16px !important; }
 .card + .card{ margin-top:18px !important; }
 
 /* セレクト幅ガチ固定 */
@@ -1841,34 +1952,10 @@ main.app > .header + .card{ margin-top:12px !important; }
   outline:none !important;              /* ★ フォーカス枠を消す（必要なら） */
   background:transparent !important;    /* ★ 背景はラッパー側に任せる */
   box-shadow:none !important;           /* ★ UAの内側シャドウを無効化 */
-}
-<<<<<<< HEAD
-/* === CX3 セレクトの二重枠を解消（このブロックを追記） === */
-.select-wrap{
-  /* 外側の1本だけ表示 */
-  border: 1px solid #d1d5db !important;
-}
 
-.select-wrap select{
-  /* 中の枠・影・背景を消す */
-  border: 0 !important;
-  border-color: transparent !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none !important;
   /* 右側の▼分の余白（お好みで） */
   padding-right: 24px !important;
 }
-
-.select-wrap select:focus,
-.select-wrap select:focus-visible{
-  /* フォーカス時は薄い内側ハイライトだけ（任意） */
-  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
-  outline: none !important;
-}
-=======
->>>>>>> b1a84b7 (UI調整とCX4関連ファイル追加)
-
 select::-ms-expand{ display:none; }
 
 /* 入力欄 */
@@ -1901,22 +1988,44 @@ select::-ms-expand{ display:none; }
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 
-<<<<<<< HEAD
-/* === 二重枠対策：フォーカスのアウトライン/影を除去 + 枠幅を統一 === */
-button, .btn, input, select { outline:none !important; box-shadow:none !important; }
-button:focus, button:focus-visible, button:active,
-.btn:focus, .btn:focus-visible, .btn:active,
-input:focus, input:focus-visible,
-select:focus, select:focus-visible { outline:none !important; box-shadow:none !important; }
+/* === CX3 セレクトの二重枠を解消（このブロックを追記） === */
+.select-wrap{
+  /* 外側の1本だけ表示 */
+  border: 1px solid #d1d5db !important;
+}
+.select-wrap select{
+  /* 中の枠・影・背景を消す */
+  border: 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  /* 右側の▼分の余白（お好みで） */
+  padding-right: 24px !important;
+}
+.select-wrap select:focus,
+.select-wrap select:focus-visible{
+  /* フォーカス時は薄い内側ハイライトだけ（任意） */
+  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
+  outline: none !important;
+}
 
-/* 既定ボタンの枠線を 1px に統一（内側の“もう1本”を防止）*/
-.btn, .btn-blue, .btn-pink, .btn-teal, .btn-violet, .btn-gray { border-width:1px !important; }
-/* アウトラインボタンも最終的に 1px へ（上の指定が勝つ）*/
-.btn-outline-blue { border-width:1px !important; }
-
-=======
->>>>>>> b1a84b7 (UI調整とCX4関連ファイル追加)
 /* ==== 結果表示 ==== */
+/* 逆順バッジ：エメラルド */
+.rev-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  margin-left:6px; padding:2px 6px;
+  border-radius:6px;
+  background:#10B981;      /* エメラルド */
+  color:#fff;
+  border:1px solid #059669; /* 濃いめ縁取りで締める */
+  font-weight:700; font-size:12px; line-height:1;
+}
+
+
+
+
+
 .res-list{ display:grid; gap:10px; margin-top:8px; }
 .res-summary{ margin:0; font-size:14px; }
 .res-card{ background:#f7fbff; border:1px solid #dfeefe; border-radius:var(--radius-card); padding:10px; }
@@ -1974,7 +2083,7 @@ select:focus, select:focus-visible { outline:none !important; box-shadow:none !i
   width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25); }
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
-.modal-x{ margin-left:auto; background:透明; border:0; font-size:22px; line-height:1; cursor:pointer; }
+.modal-x{ margin-left:auto; background: transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
 .modal-content{ padding:12px 14px; }
 .modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
 `;
@@ -1997,7 +2106,6 @@ if (document.readyState === 'loading') {
 window.addEventListener('resize', eatTopPadding, { passive:true });
 new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
-
 
 /* === 幅ロック：後からCSSが当たっても常に上書き === */
 (function lockSelectWidthForever(){
