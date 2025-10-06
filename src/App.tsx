@@ -235,23 +235,31 @@ export default function App() {
     if (!arr.includes("CX3")) arr.push("CX3");
     if (!arr.includes("CX4")) arr.push("CX4"); // 追加
     return arr.sort((a,b)=>{
-      const na = parseInt(a.replace(/\D+/g,""),10);
-      const nb = parseInt(b.replace(/\D+/g,""),10);
-      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na-nb;
-      return a.localeCompare(b,"ja");
-    });
+  const na = parseInt(a.replace(/\D+/g,""),10);
+  const nb = parseInt(b.replace(/\D+/g,""),10);
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return nb - na; // 降順
+  return b.localeCompare(a,"ja"); // フォールバックも降順
+});
+
   }, [rowsNorm]);
 
-  const [leftSet, setLeftSet] = useState("CX3");
-  const [rightSet, setRightSet] = useState("CX3");
-  useEffect(()=>{ if (!leftSet) setLeftSet("CX3"); if (!rightSet) setRightSet("CX3"); },[]);
+  const [leftSet, setLeftSet] = useState("CX4");
+const [rightSet, setRightSet] = useState("CX4");
+
+  useEffect(()=>{ if (!leftSet) setLeftSet("CX4"); if (!rightSet) setRightSet("CX4"); },[]);
+
 
   const [lQuery, setLQuery] = useState<number[]>([]);
   const [rQuery, setRQuery] = useState<number[]>([]);
   const [route, setRoute] = useState<Route>(routeFromHash());
   const [dirL, setDirL] = useState<"down"|"up">("down");
   const [dirR, setDirR] = useState<"down"|"up">("down");
+  
+
   useEffect(()=>{ const onHash=()=>setRoute(routeFromHash()); window.addEventListener("hashchange",onHash); return ()=>window.removeEventListener("hashchange",onHash); },[]);
+const isMobile = typeof window !== "undefined"
+  ? window.matchMedia("(max-width: 640px)").matches
+  : false;
 
   const rowsL   = useMemo(() => rowsNorm.filter(r => r.set === leftSet),  [rowsNorm, leftSet]);
   const rowsR   = useMemo(() => rowsNorm.filter(r => r.set === rightSet), [rowsNorm, rightSet]);
@@ -659,6 +667,44 @@ const nameLooseFor = (setKey: string) => (rawToken: string) => {
   const hlCx3L = useMemo(()=> makeHLCx3(lHitsCX3), [lHitsCX3]);
   const hlCx3R = useMemo(()=> makeHLCx3(rHitsCX3), [rHitsCX3]);
 
+// ★ 追加：高レア「あり/なし」でハイライトを二分するヘルパー
+function makeHLCx3Split(
+  hits: Array<{ col:number; row:number; matched:number[]; dir:"down"|"up"; matchedRows:number[] }>,
+  positions: PositionRow[],
+  setKey: string
+){
+  const good = new Set<string>(); // この先に高レアあり → 赤枠用
+  const none = new Set<string>(); // この先に高レアなし → 別色枠用
+
+  for (const h of hits) {
+    const lines = buildLinesForHit(
+      h as any,
+      positions,
+      rarityStrictFor(setKey),
+      nameLooseFor(setKey)
+    );
+    const bucket = (lines.length > 0) ? good : none;
+    for (const rr of h.matchedRows) if (rr > 0) bucket.add(`${h.col}:${rr}`);
+  }
+  return { good, none };
+}
+
+// ★ 追加：高レアあり/なしを二分したハイライト（まだ未使用）
+const hlSplitL = useMemo(
+  () => isCxMode(leftSet)
+        ? makeHLCx3Split(lHitsCX3, posL, leftSet)
+        : { good: new Set<string>(), none: new Set<string>() },
+  [leftSet, lHitsCX3, posL]
+);
+
+const hlSplitR = useMemo(
+  () => isCxMode(rightSet)
+        ? makeHLCx3Split(rHitsCX3, posR, rightSet)
+        : { good: new Set<string>(), none: new Set<string>() },
+  [rightSet, rHitsCX3, posR]
+);
+
+
   // ===== 可視列 =====
   const visiblePosFromCx3Hits = (hits: Cx3Hit[], rowIdx: Set<number>): number[] => {
     const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdx.has(c));
@@ -683,12 +729,12 @@ const nameLooseFor = (setKey: string) => (rawToken: string) => {
   
 
   // 候補（※既存の type Candidate はそのまま使います）
-const buildLinesForHit = (
+function buildLinesForHit(
   hit: Cx3Hit,
   positions: PositionRow[],
   getRarityForKey?: (key: string) => string | undefined,
   getNameForKey?:   (key: string) => string | undefined
-): Candidate[] => {
+): Candidate[] {
   const rarFn  = (typeof getRarityForKey === "function") ? getRarityForKey : (() => undefined);
   const nameFn = (typeof getNameForKey   === "function") ? getNameForKey   : (() => undefined);
 
@@ -789,8 +835,7 @@ const buildLinesForHit = (
 
   // 最大5件（= 直近4件 + LRP追加）
   return top.slice(0, MAX_LR_CANDIDATES + 1);
-};
-
+}
 
 
 
@@ -940,112 +985,11 @@ const buildSuggestions = (
     return tmp.length ? tmp : q;
   };
 
-  /* ================= DL版：ショートカット（Alt+D = CSV / Alt+J = JSON） ================ */
-  const toCsvLine = (arr: string[]) =>
-    arr.map(s => /[",\n]/.test(s) ? `\"${s.replace(/\"/g,'\"\"')}\"` : s).join(",");
+  /* ================= DL版：ショートカット（無効化） ================= */
+useEffect(() => {}, []);
+/* ================= /DL版 ================= */
 
-  const makeCx3Matrix = (
-    positions: PositionRow[], rowIndexCols: Set<number>, visiblePos?: number[]
-  ) => {
-    const rowsSorted = positions.slice().sort((a,b)=>a.no-b.no);
-    const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
-    const dataCols = allCols.filter(c => !rowIndexCols.has(c));
-    const viewCols = Array.from({ length: 12 }, (_, i) => dataCols[i] ?? null);
 
-    const useCirc = new Set(visiblePos ?? []);
-    const useFilter = useCirc.size > 0;
-
-    const header = ["#"].concat(
-      viewCols.map((_, i) => {
-        const pos = i + 1;
-        if (useFilter && !useCirc.has(pos)) return "";
-        return circledCol(pos);
-      }).filter(Boolean)
-    );
-
-    const body: string[][] = [];
-    for (const r of rowsSorted) {
-      const line: string[] = [String(r.no)];
-      for (let i = 0; i < viewCols.length; i++) {
-        const pos = i + 1;
-        if (useFilter && !useCirc.has(pos)) continue;
-        const colIdx = viewCols[i];
-        const tokens = colIdx ? ((r as any)[`raw${colIdx}`] as string[] | undefined) : undefined;
-        const vals = Array.isArray(tokens) ? tokens : [];
-        line.push(vals.join(" / "));
-      }
-      body.push(line);
-    }
-    return { header, body };
-  };
-
-  const downloadBlob = (fileName: string, content: string, mime = "text/plain;charset=utf-8") => {
-    const blob = new Blob([content], { type: mime });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey) return;
-      const onLeft  = route === "leftResults";
-      const onRight = route === "rightResults";
-      if (!onLeft && !onRight) return;
-
-      const side = onLeft ? "L" : "R";
-      const setKey = onLeft ? leftSet : rightSet;
-      const cxMode = isCxMode(setKey);
-
-      if (e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        if (cxMode) {
-          const positions = onLeft ? posL : posR;
-          const rowIdx    = onLeft ? rowIdxL : rowIdxR;
-          const visible   = onLeft ? visColsCx3L : visColsCx3R;
-          const { header, body } = makeCx3Matrix(positions, rowIdx, visible);
-          const csv = [toCsvLine(header), ...body.map(toCsvLine)].join("\n");
-          downloadBlob(`${setKey}_${side}.csv`, csv, "text/csv;charset=utf-8");
-        } else {
-          // GLモード（保険）：簡易CSV
-          const idx = onLeft ? leftIdx : rightIdx;
-          const maxRow = Math.max(idx.maxRow, 100);
-          const cols = Array.from({ length: 12 }, (_, i) => i + 1);
-          const header = ["#", ...cols.map(String)];
-          const body: string[][] = [];
-          for (let r = 1; r <= maxRow; r++) {
-            const line = [String(r)];
-            for (const c of cols) {
-              const cell = (idx.byCyl[side as "L"|"R"][c] || []).find((x:any)=>x.row===r);
-              line.push(typeof cell?.num === "number" ? String(cell.num) : "");
-            }
-            body.push(line);
-          }
-          const csv = [toCsvLine(header), ...body.map(toCsvLine)].join("\n");
-          downloadBlob(`${setKey}_${side}.csv`, csv, "text/csv;charset=utf-8");
-        }
-      }
-
-      if (e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        if (isCxMode(onLeft ? leftSet : rightSet)) {
-          const positions = onLeft ? posL : posR;
-          const rowIdx    = onLeft ? rowIdxL : rowIdxR;
-          const visible   = onLeft ? visColsCx3L : visColsCx3R;
-          const { header, body } = makeCx3Matrix(positions, rowIdx, visible);
-          const obj = { set: onLeft ? leftSet : rightSet, side, header, rows: body };
-          downloadBlob(`${(onLeft?leftSet:rightSet)}_${side}.json`, JSON.stringify(obj, null, 2), "application/json");
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [route, leftSet, rightSet, posL, posR, rowIdxL, rowIdxR, visColsCx3L, visColsCx3R, leftIdx, rightIdx]);
-
-  /* ================= /DL版 ================= */
 
   return (
     <main className="app">
@@ -1058,16 +1002,15 @@ const buildSuggestions = (
           {/* 左 */}
           <section className="card">
             {/* タイトル + 右上に履歴一覧（保存はホームでは非表示） */}
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-              <div className="section-title" style={{ margin:0 }}>左シリンダー</div>
-              <button
-                className="btn btn-violet"
-                style={{ marginLeft:"auto" }}
-                onClick={()=>setListModal({open:true, side:"L"})}
-              >
-                履歴一覧
-              </button>
-            </div>
+            <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
+  {(loading && !(isMobile && route === "home")) && "読込中…"}{" "}
+  {(() => {
+    const msg = String((error as any)?.message || "");
+    if (!msg) return null;
+    return /404| Not Found/i.test(msg) ? null : `エラー: ${msg}`;
+  })()}
+</div>
+
 
             {/* 1行目（中央揃え） */}
             <div
@@ -1309,14 +1252,18 @@ const buildSuggestions = (
 
           <div style={{ marginTop:12 }}>
             {isCxMode(leftSet)
-              ? <GridCx3
-                  positions={posL}
-                  rowIndexCols={rowIdxL}
-                  getRarityForKey={rarityStrictFor(leftSet)}
-                  getNameForKey={nameLooseFor(leftSet)}
-                  highlight={hlCx3L}
-                  visibleCols={visColsCx3L}
-                />
+              ?<GridCx3
+  positions={posL}
+  rowIndexCols={rowIdxL}
+  getRarityForKey={rarityStrictFor(leftSet)}
+  getNameForKey={nameLooseFor(leftSet)}
+  highlight={hlCx3L}
+  visibleCols={visColsCx3L}
+  /* ★ 追加（この先に高レアあり＝赤／なし＝別色） */
+  highlightGood={hlSplitL.good}
+  highlightNone={hlSplitL.none}
+/>
+
               : <Grid
                   byCyl={leftIdx.byCyl}
                   maxRow={Math.max(leftIdx.maxRow, 100)}
@@ -1362,13 +1309,17 @@ const buildSuggestions = (
           <div style={{ marginTop:12 }}>
             {isCxMode(rightSet)
               ? <GridCx3
-                  positions={posR}
-                  rowIndexCols={rowIdxR}
-                  getRarityForKey={rarityStrictFor(rightSet)}
-                  getNameForKey={nameLooseFor(rightSet)}
-                  highlight={hlCx3R}
-                  visibleCols={visColsCx3R}
-                />
+  positions={posR}
+  rowIndexCols={rowIdxR}
+  getRarityForKey={rarityStrictFor(rightSet)}
+  getNameForKey={nameLooseFor(rightSet)}
+  highlight={hlCx3R}
+  visibleCols={visColsCx3R}
+  /* ★ 追加 */
+  highlightGood={hlSplitR.good}
+  highlightNone={hlSplitR.none}
+/>
+
               : <Grid
                   byCyl={rightIdx.byCyl}
                   maxRow={Math.max(rightIdx.maxRow, 100)}
@@ -1416,13 +1367,14 @@ const buildSuggestions = (
       )}
 
       <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
-        {loading && "読込中…"}{" "}
-        {(() => {
-          const msg = String((error as any)?.message || "");
-          if (!msg) return null;
-          return /404|Not Found/i.test(msg) ? null : `エラー: ${msg}`;
-        })()}
-      </div>
+  {(loading && !(isMobile && route === "home")) && "読込中…"}{" "}
+  {(() => {
+    const msg = String((error as any)?.message || "");
+    if (!msg) return null;
+    // favicon 404 等は出さない
+    return /(404|Not\s*Found)|favicon\.ico/i.test(msg) ? null : `エラー: ${msg}`;
+  })()}
+</div>
     </main>
   );
 }
@@ -1459,16 +1411,15 @@ function HistoryPanel({ items, onRestore, onDelete, onClear }:{
   );
 }
 
+
 /* ===== 結果リスト ===== */
-/* ===== 結果リスト ===== */
-function ResultList({ hits, getLines, isReverse = false }:{
+function ResultList({ hits, getLines, isReverse = false }: {
   hits: any[],
   getLines?: (hit:any)=>Array<{code:string; name:string; dist:number; badge:"LR"|"LR★"}>,
   isReverse?: boolean
 }) {
   if (!hits?.length) return <div className="res-empty">一致はまだありません。</div>;
 
-  // ← ここから“return の直前準備ブロック”
   const hasCx3 = typeof getLines === "function";
 
   const prepared = hits
@@ -1481,8 +1432,42 @@ function ResultList({ hits, getLines, isReverse = false }:{
     })
     .sort((a,b)=> a.score - b.score || a.h.col - b.h.col || a.h.row - b.h.row);
 
-  const topN = prepared.slice(0, 4); // ← ここが “top” の正体
-  // ――― ここまでが追加 ―――
+  // CXモード：Top4にLR★が無ければ5件目にLR★を注入
+  let topN: Array<typeof prepared[number]>;
+  if (!hasCx3) {
+    topN = prepared.slice(0, 4);
+  } else {
+    const good = prepared.filter(p => p.lines.length > 0).slice(0, 4);
+    if (good.length < 4) {
+      const fillers = prepared
+        .filter(p => p.lines.length === 0)
+        .sort((a,b) => {
+          const an = (typeof a.h.nextAnySteps === "number") ? a.h.nextAnySteps : 999999;
+          const bn = (typeof b.h.nextAnySteps === "number") ? b.h.nextAnySteps : 999999;
+          return an - bn || a.h.col - b.h.col || a.h.row - b.h.row;
+        });
+      good.push(...fillers.slice(0, 4 - good.length));
+    }
+    const hasLRStarIn = (arr?: Array<{badge:"LR"|"LR★"}>) => Array.isArray(arr) && arr.some(c => c.badge === "LR★");
+    const topHasLRStar = good.some(p => hasLRStarIn(p.lines));
+    if (!topHasLRStar) {
+      let best: null | { p: typeof prepared[number]; dist: number } = null;
+      for (const p of prepared) {
+        const lrstars = (p.lines || []).filter(x => x.badge === "LR★");
+        if (!lrstars.length) continue;
+        const d = Math.min(...lrstars.map(x => x.dist));
+        if (!best ||
+            d < best.dist ||
+            (d === best.dist && (p.h.col < best.p.h.col || (p.h.col === best.p.h.col && p.h.row < best.p.h.row)))) {
+          best = { p, dist: d };
+        }
+      }
+      if (best && !good.some(g => g.h.col === best!.p.h.col && g.h.row === best!.p.h.row)) {
+        good.push(best.p);
+      }
+    }
+    topN = good.slice(0, 5);
+  }
 
   return (
     <div className="res-list">
@@ -1497,9 +1482,7 @@ function ResultList({ hits, getLines, isReverse = false }:{
             <div className="pos">
               ヒット位置: <strong>{circledCol(h.col)}</strong> の <strong>{h.row}番目</strong>
             </div>
-
             {isReverse && <span className="rev-badge">逆順</span>}
-
             {!hasCx3 && (
               <div className="meta">
                 {Array.isArray(h.nextLRMany) && h.nextLRMany.length
@@ -1510,23 +1493,18 @@ function ResultList({ hits, getLines, isReverse = false }:{
             )}
           </div>
 
-          {/* CXモード：候補行 */}
           {hasCx3 && !!lines?.length && (
             <div className="res-lines">
-              {lines
-                .slice()
-                .sort((a,b)=>a.dist-b.dist)
-                .map(b => (
-                  <div key={b.code} className="res-line">
-                    <span className="res-dist">（あと <strong>{b.dist}</strong> 回です）</span>
-                    <span className={`badge ${b.badge === "LR" ? "badge-lr" : "badge-p"}`}>{b.badge}</span>
-                    <span className="res-name">{b.code}:{b.name}</span>
-                  </div>
-                ))}
+              {lines.slice().sort((a,b)=>a.dist-b.dist).map(b => (
+                <div key={b.code} className="res-line">
+                  <span className="res-dist">（あと <strong>{b.dist}</strong> 回です）</span>
+                  <span className={`badge ${b.badge === "LR" ? "badge-lr" : "badge-p"}`}>{b.badge}</span>
+                  <span className="res-name">{b.code}:{b.name}</span>
+                </div>
+              ))}
             </div>
           )}
 
-          {/* CXモード：候補なし */}
           {hasCx3 && !lines?.length && (
             <div className="res-lines">
               <div className="res-line">
@@ -1589,14 +1567,20 @@ function Grid({ byCyl, maxRow, highlightCells, cylinder, visibleCols }:{
 }
 
 function GridCx3({
-  positions, rowIndexCols, getRarityForKey, getNameForKey, highlight, visibleCols
+  positions, rowIndexCols, getRarityForKey, getNameForKey,
+  highlight, visibleCols,
+  highlightGood,          // ★ 追加：高レアあり
+  highlightNone           // ★ 追加：高レアなし
 }:{
   positions: PositionRow[], rowIndexCols: Set<number>,
   getRarityForKey: (key:string)=>string|undefined,
   getNameForKey: (key:string)=>string|undefined,
   highlight?: Set<string>,
   visibleCols?: number[],
+  highlightGood?: Set<string>,   // ★ 追加
+  highlightNone?: Set<string>,   // ★ 追加
 }) {
+
   const rows = [...positions].sort((a,b)=>a.no-b.no);
   const circFilter = new Set(visibleCols ?? []);
   const useFilter = circFilter.size > 0;
@@ -1655,14 +1639,20 @@ function GridCx3({
                 const rarKey = (isMono && typeof getRarityForKey === "function")
                   ? getRarityForKey(token!)
                   : undefined;
-                const isHL = colIdx ? highlight?.has?.(`${colIdx}:${r.no}`) : false;
+                const keyStr   = colIdx ? `${colIdx}:${r.no}` : "";
+const isHLgood = keyStr ? (highlightGood?.has?.(keyStr) ?? highlight?.has?.(keyStr) ?? false) : false; // 先に good / なければ従来の highlight を赤扱い
+const isHLnone = keyStr ? (highlightNone?.has?.(keyStr) ?? false) : false;
 
                 if (singlePos && pos === singlePos) {
                   return (
                     <td key={i} className="cell"
                       style={{ background:"#FFFFFF", padding:2, fontSize:12, lineHeight:1.25,
-                               verticalAlign:"middle", boxShadow: isHL ? "inset 0 0 0 3px #ef4444" : undefined,
-                               textAlign:"left" }}
+         verticalAlign:"middle",
+         boxShadow: isHLgood ? "inset 0 0 0 3px #ef4444"
+                  : isHLnone ? "inset 0 0 0 3px #10B981"
+                  : undefined,
+         textAlign:"left" }}
+
                       title={vals.join(" / ")}>
                       {vals.length === 0 ? "" : (
                         <div style={{ display:"grid", gap:2 }}>
@@ -1680,15 +1670,18 @@ function GridCx3({
                 })();
 
                 const baseStyle: React.CSSProperties = {
-                  background: monoBg,
-                  padding: 2,
-                  fontSize: isMono ? 12 : 10,
-                  lineHeight: 1.15,
-                  verticalAlign: "middle",
-                  whiteSpace: "normal",
-                  wordBreak: "break-all",
-                  boxShadow: isHL ? "inset 0 0 0 3px #ef4444" : undefined
-                };
+  background: monoBg,
+  padding: 2,
+  fontSize: isMono ? 12 : 10,
+  lineHeight: 1.15,
+  verticalAlign: "middle",
+  whiteSpace: "normal",
+  wordBreak: "break-all",
+  boxShadow: isHLgood ? "inset 0 0 0 3px #ef4444"
+           : isHLnone ? "inset 0 0 0 3px #10B981"
+           : undefined
+};
+
 
                 return (
                   <td key={i} className="cell" style={baseStyle} title={vals.join("/")}>
@@ -1853,6 +1846,7 @@ function SaveMemoModal({
   );
 }
 
+
 /* ========= 共通 util ========= */
 function makeHLCx3(hits: Array<{col:number; row:number; matched:number[]; dir:"down"|"up"; matchedRows:number[]}>): Set<string> {
   const out = new Set<string>();
@@ -2009,6 +2003,14 @@ select::-ms-expand{ display:none; }
   box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
   outline: none !important;
 }
+/* --- Homeのセクション見出しを黒の通常文字に --- */
+main.app .card .section-title{
+  color:#111 !important;
+  font-weight:700 !important;     /* 太字を外す */
+  background:transparent !important;
+  text-shadow:none !important;
+}
+
 
 /* ==== 結果表示 ==== */
 /* 逆順バッジ：エメラルド */
