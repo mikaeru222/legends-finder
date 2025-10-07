@@ -223,6 +223,54 @@ function findSaved(side:"L"|"R", setKey:string, id:string): SavedEntry | undefin
   return loadSavedList(side,setKey).find(x=>x.id===id);
 }
 
+
+
+/* ========= 左右ペア保存 ========= */
+type SavedPair = {
+  id: string;
+  left:  { set: string; pattern: number[]; rev?: boolean };
+  right: { set: string; pattern: number[]; rev?: boolean };
+  memo: string;
+  ts: number;
+};
+
+const PAIR_KEY = "legends:savedPairs:v1";
+
+function loadPairs(): SavedPair[] {
+  try {
+    const raw = localStorage.getItem(PAIR_KEY);
+    return raw ? (JSON.parse(raw) as SavedPair[]) : [];
+  } catch {
+    return [];
+  }
+}
+function savePairs(list: SavedPair[]) {
+  try { localStorage.setItem(PAIR_KEY, JSON.stringify(list)); } catch {}
+}
+function addPair(
+  leftSet: string,  leftPat:  number[],
+  rightSet: string, rightPat: number[],
+  memo: string, revL?: boolean, revR?: boolean
+) {
+  const ent: SavedPair = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+    left:  { set: leftSet,  pattern: [...leftPat],  rev: !!revL },
+    right: { set: rightSet, pattern: [...rightPat], rev: !!revR },
+    memo: memo.slice(0,128),
+    ts: Date.now(),
+  };
+  savePairs([ent, ...loadPairs()]);
+}
+function updatePair(id: string, patch: Partial<Pick<SavedPair,"left"|"right"|"memo">>) {
+  const next = loadPairs().map(x => x.id === id ? { ...x, ...patch, ts: Date.now() } : x);
+  savePairs(next);
+}
+function removePair(id: string) {
+  savePairs(loadPairs().filter(x => x.id !== id));
+}
+
+
+
 /* ========= App ========= */
 export default function App() {
   const { rows, sets, loading, error } = useCsvData(CSV_URL);
@@ -970,20 +1018,36 @@ const buildSuggestions = (
   /* ====== モーダル状態 ====== */
   const [saveModal, setSaveModal] =
   useState<{open:boolean; side:"L"|"R"|null; editId?:string|null; rev?:boolean}>({open:false, side:null, editId:null, rev:false});
-  const [listModal, setListModal] = useState<{open:boolean; side:"L"|"R"|null}>({open:false, side:null});
-  const [savedVersion, setSavedVersion] = useState(0); // 保存変更トリガー
+  const [listModal, setListModal] =
+  useState<{ open: boolean; side: "L" | "R" | null }>({ open: false, side: null });
+
+// ★ ペア保存モーダル
+const [pairSaveModal, setPairSaveModal] = useState<{ open: boolean }>({ open: false });
+
+// ★ 保存変更トリガー
+const [savedVersion, setSavedVersion] = useState(0);
+
+// ★ 保存一覧モーダル（左右ペア）
+const [pairListOpen, setPairListOpen] = useState(false);
+const [pairListQuery, setPairListQuery] = useState(""); // ← 追加（検索キーワード）
+
+// ★ 編集モーダル（左右ペア）
+const [pairEdit, setPairEdit] =
+  useState<{ open: boolean; id: string | null }>({ open:false, id:null });
+
+
+
+
 
   // ★ ここに追加（return の直前）
-  const currentPatternFor = (side: "L" | "R"): number[] => {
-    const digits = side === "L" ? candLDigits : candRDigits;
-    const buf = (side === "L" ? candLInput : candRInput).trim();
+const currentPatternFor = (side: "L" | "R"): number[] => {
+  const digits = side === "L" ? candLDigits : candRDigits;
+  const buf    = (side === "L" ? candLInput  : candRInput).trim();
 
-    const tmp = [...digits];
-    if (/^\d{1,3}$/.test(buf)) tmp.push(parseInt(buf, 10));
-
-    const q = side === "L" ? lQuery : rQuery; // 何も無ければ直近検索
-    return tmp.length ? tmp : q;
-  };
+  const out = [...digits];
+  if (/^\d{1,3}$/.test(buf)) out.push(parseInt(buf, 10));
+  return out;  // 未入力なら [] を返す（前回の検索値には戻らない）
+};
 
   /* ================= DL版：ショートカット（無効化） ================= */
 useEffect(() => {}, []);
@@ -1007,7 +1071,7 @@ useEffect(() => {}, []);
   <button
     className="btn btn-violet"
     style={{ marginLeft:"auto" }}
-    onClick={()=>setListModal({ open:true, side:"L" })}
+    onClick={()=>setPairListOpen(true)}
   >
     履歴一覧
   </button>
@@ -1129,7 +1193,7 @@ useEffect(() => {}, []);
               <button
                 className="btn btn-violet"
                 style={{ marginLeft:"auto" }}
-                onClick={()=>setListModal({open:true, side:"R"})}
+                onClick={()=>setPairListOpen(true)}
               >
                 履歴一覧
               </button>
@@ -1241,11 +1305,15 @@ useEffect(() => {}, []);
 <strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
 
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"L", rev: (dirL === "up")})}>履歴保存</button>
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+<button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+
+</div>
 
 
-              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"L"})}>保存一覧</button>
-            </div>
+
+
+
           </div>
 
           {!!lQuery.length && (
@@ -1297,11 +1365,15 @@ useEffect(() => {}, []);
 <strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
 
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-              <button className="btn btn-blue" onClick={()=>setSaveModal({open:true, side:"R", rev: (dirR === "up")})}>履歴保存</button>
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+<button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+
+</div>
 
 
-              <button className="btn btn-teal" onClick={()=>setListModal({open:true, side:"R"})}>保存一覧</button>
-            </div>
+
+
+
           </div>
 
           {!!rQuery.length && (
@@ -1354,14 +1426,22 @@ useEffect(() => {}, []);
           onClose={()=>setListModal({open:false, side:null})}
           onEdit={(id)=>{ setSaveModal({open:true, side:listModal.side, editId:id}); }}
           onDelete={(id)=>{ removeSavedEntry(listModal.side!, listModal.side==="L"?leftSet:rightSet, id); setSavedVersion(v=>v+1); }}
-          onApply={(pat)=>{
-            if (listModal.side==="L") {
-              setCandLDigits(pat); setLQuery(pat); setDirL("down"); nav("leftResults");
-            } else {
-              setCandRDigits(pat); setRQuery(pat); setDirR("down"); nav("rightResults");
-            }
-            setListModal({open:false, side:null});
-          }}
+          onApply={(it)=>{
+  const pat = it.pattern;
+  if (listModal.side==="L") {
+    setCandLDigits(pat);
+    setLQuery(pat);
+    setDirL(it.rev ? "up" : "down");
+    nav("leftResults");
+  } else {
+    setCandRDigits(pat);
+    setRQuery(pat);
+    setDirR(it.rev ? "up" : "down");
+    nav("rightResults");
+  }
+  setListModal({open:false, side:null});
+}}
+
         />
       )}
 
@@ -1378,6 +1458,128 @@ useEffect(() => {}, []);
 />
 
       )}
+
+{/* 追加：左右ペア保存モーダル */}
+{pairSaveModal.open && (
+  <PairSaveModal
+    leftSet={leftSet}
+    rightSet={rightSet}
+    leftPattern={currentPatternFor("L")}
+    rightPattern={currentPatternFor("R")}
+    revL={dirL === "up"}
+    revR={dirR === "up"}
+    onClose={() => setPairSaveModal({ open: false })}
+    onSaved={() => { setPairSaveModal({ open:false }); setSavedVersion(v => v + 1); }}
+  />
+)}
+
+{/* 追加：左右ペアの保存一覧（描画） */}
+{pairListOpen && (() => {
+  
+  const list = loadPairs(); // 毎回読み直し（削除後は setSavedVersion で再描画）
+
+  // ← ここから貼る
+  const q = pairListQuery.trim().toLowerCase();
+  const filtered = !q ? list : list.filter(it => {
+    const ts = new Date(it.ts).toLocaleString("ja-JP");
+    const leftPat  = it.left.pattern.join(" ");
+    const rightPat = it.right.pattern.join(" ");
+    return (
+      (it.memo || "").toLowerCase().includes(q) ||
+      it.left.set.toLowerCase().includes(q) ||
+      it.right.set.toLowerCase().includes(q) ||
+      leftPat.includes(q) || rightPat.includes(q) ||
+      ts.includes(q)
+    );
+  });
+  // ← ここまで
+
+
+  const applyPair = (it: SavedPair) => {
+    // セットを反映
+    setLeftSet(it.left.set);
+    setRightSet(it.right.set);
+
+    // パターンと方向を反映
+    setCandLDigits(it.left.pattern);
+    setLQuery(it.left.pattern);
+    setDirL(it.left.rev ? "up" : "down");
+
+    setCandRDigits(it.right.pattern);
+    setRQuery(it.right.pattern);
+    setDirR(it.right.rev ? "up" : "down");
+
+    setPairListOpen(false);
+    nav("leftResults"); // 左結果へ移動（必要なら rightResults に変えてもOK）
+  };
+
+  const delPair = (id: string) => {
+    removePair(id);
+    setSavedVersion(v => v + 1); // 再描画トリガー
+  };
+
+  const fmt = (pat:number[], rev?:boolean) =>
+    (rev ? [...pat].slice().reverse() : pat).join(" → ");
+
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={()=>setPairListOpen(false)} />
+      <div className="modal-body" style={{ width: "min(720px, 94vw)" }}>
+        <div className="modal-head">
+          <div className="modal-title">保存一覧（左右ペア）</div>
+          <button className="modal-x" onClick={()=>setPairListOpen(false)}>×</button>
+        </div>
+
+        <div className="modal-content" style={{ display:"grid", gap:8 }}>
+          {!list.length && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
+
+          {list.map(it => (
+            <div key={it.id}
+                 style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                <strong>左（{it.left.set}）{it.left.rev && <span className="rev-badge" style={{marginLeft:6}}>逆順</span>}：</strong>
+                <span>{fmt(it.left.pattern, it.left.rev)}</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                <strong>右（{it.right.set}）{it.right.rev && <span className="rev-badge" style={{marginLeft:6}}>逆順</span>}：</strong>
+                <span>{fmt(it.right.pattern, it.right.rev)}</span>
+              </div>
+              {it.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{it.memo}</div>}
+
+              <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+  <button className="btn btn-blue" onClick={()=>applyPair(it)}>適用</button>
+  <button className="btn btn-teal" onClick={()=>setPairEdit({ open:true, id: it.id })}>編集</button>
+  <button className="btn btn-gray" onClick={()=>delPair(it.id)}>削除</button>
+</div>
+
+
+              <div style={{ marginTop:6, fontSize:12, color:"#64748b" }}>
+                {new Date(it.ts).toLocaleString("ja-JP")}
+              </div>
+            </div>
+          ))}
+
+          {/* 追加：左右ペアの“編集”モーダルを表示 */}
+{pairEdit.open && pairEdit.id && (
+  <PairEditModal
+    id={pairEdit.id}
+    onClose={() => setPairEdit({ open:false, id:null })}
+    onSaved={() => {
+      setPairEdit({ open:false, id:null });
+      setSavedVersion(v => v + 1);
+    }}
+  />
+)}
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-gray" onClick={()=>setPairListOpen(false)}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+
 
       <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
   {(loading && !(isMobile && route === "home")) && "読込中…"}{" "}
@@ -1735,22 +1937,35 @@ function SavedListModal({
   side, setKey, version, onClose, onApply, onEdit, onDelete
 }:{
   side:"L"|"R"; setKey:string; version:number;
-  onClose:()=>void; onApply:(pattern:number[])=>void;
+  onClose:()=>void; onApply:(pattern:number[], rev?:boolean)=>void;
   onEdit:(id:string)=>void; onDelete:(id:string)=>void;
 }) {
+
+
   const [list, setList] = useState<SavedEntry[]>(()=>loadSavedList(side,setKey));
   useEffect(()=>{ setList(loadSavedList(side,setKey)); }, [side,setKey,version]);
 
   return (
     <div className="modal">
       <div className="modal-backdrop" onClick={onClose}/>
-      <div className="modal-body" style={{ width: "min(660px, 94vw)" }}>
+      <div className="modal-body" style={{
+  width: "min(660px, 94vw)",
+  maxHeight: "90vh",
+  display: "flex",
+  flexDirection: "column"
+}}>
+
         <div className="modal-head">
           <div className="modal-title">保存一覧（{side==="L"?"左":"右"}シリンダー）</div>
           <button className="modal-x" onClick={onClose}>×</button>
         </div>
 
-        <div className="modal-content" style={{ display:"grid", gap:8 }}>
+        <div className="modal-content" style={{
+  display: "grid",
+  gap: 8,
+  overflowY: "auto",
+  flex: "1 1 auto"
+}}>
           {!list.length && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
 
           {list.map(it=>(
@@ -1764,7 +1979,9 @@ function SavedListModal({
               </div>
               {it.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{it.memo}</div>}
               <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
-                <button className="btn btn-blue" onClick={()=>onApply(it.pattern)}>適用</button>
+                <button className="btn btn-blue" onClick={()=>onApply(it.pattern, it.rev)}>適用</button>
+
+
                 <button className="btn btn-teal" onClick={()=>onEdit(it.id)}>編集</button>
                 <button className="btn btn-gray" onClick={()=>onDelete(it.id)}>削除</button>
               </div>
@@ -1859,6 +2076,206 @@ function SaveMemoModal({
   );
 }
 
+/* ========= 左右ペア保存モーダル ========= */
+/* ========= 左右ペア保存モーダル ========= */
+function PairSaveModal({
+  leftSet, rightSet,
+  leftPattern, rightPattern,
+  revL, revR,
+  onClose, onSaved,
+}:{
+  leftSet: string;
+  rightSet: string;
+  leftPattern: number[];
+  rightPattern: number[];
+  revL?: boolean;
+  revR?: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [memo, setMemo] = useState("");
+
+  const canSave = leftPattern.length > 0 || rightPattern.length > 0;
+
+
+  const fmt = (pat:number[], rev?:boolean) =>
+    (rev ? [...pat].slice().reverse() : pat).join(" → ");
+
+  const saveNow = () => {
+    if (!canSave) return;
+    addPair(leftSet, leftPattern, rightSet, rightPattern, memo, !!revL, !!revR);
+    onSaved();
+  };
+
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={onClose}/>
+      <div className="modal-body" style={{ width: "min(620px, 94vw)" }}>
+        <div className="modal-head">
+          <div className="modal-title">左右まとめて履歴保存</div>
+          <button className="modal-x" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-content" style={{ display:"grid", gap:10 }}>
+          <div style={{ display:"grid", gap:6 }}>
+            <div style={{ fontWeight:700 }}>
+              左シリンダー（{leftSet}）{revL && <span className="rev-badge" style={{ marginLeft:6 }}>逆順</span>}
+            </div>
+            <div style={{
+              padding:"6px 8px", border:"1px solid #e5e7eb", borderRadius:6,
+              background:"#fafafa", whiteSpace:"pre-wrap"
+            }}>
+              {leftPattern.length ? fmt(leftPattern, revL) : "（未入力）"}
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gap:6 }}>
+            <div style={{ fontWeight:700 }}>
+              右シリンダー（{rightSet}）{revR && <span className="rev-badge" style={{ marginLeft:6 }}>逆順</span>}
+            </div>
+            <div style={{
+              padding:"6px 8px", border:"1px solid #e5e7eb", borderRadius:6,
+              background:"#fafafa", whiteSpace:"pre-wrap"
+            }}>
+              {rightPattern.length ? fmt(rightPattern, revR) : "（未入力）"}
+            </div>
+          </div>
+
+          <textarea
+            value={memo}
+            onChange={(e)=>setMemo(e.target.value.slice(0,128))}
+            placeholder="（任意メモ・128文字まで）"
+            rows={4}
+            style={{ width:"100%", boxSizing:"border-box", border:"1px solid #d1d5db", borderRadius:8, padding:"8px" }}
+          />
+        </div>
+
+        <div className="modal-actions">
+          <div style={{ marginRight:"auto" }} />
+          <button className="btn btn-gray" onClick={onClose}>閉じる</button>
+          <button className="btn btn-blue" onClick={saveNow} disabled={!canSave}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+/* ========= 左右ペア 編集モーダル ========= */
+function PairEditModal({
+  id,
+  onClose,
+  onSaved,
+}: {
+  id: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const found = loadPairs().find(x => x.id === id) || null;
+
+  const [leftText,  setLeftText]  = useState<string>(found ? (found.left.pattern  || []).join(" ")  : "");
+  const [rightText, setRightText] = useState<string>(found ? (found.right.pattern || []).join(" ")  : "");
+  const [memo, setMemo]           = useState<string>(found ? (found.memo || "") : "");
+  const [revL, setRevL]           = useState<boolean>(!!found?.left.rev);
+  const [revR, setRevR]           = useState<boolean>(!!found?.right.rev);
+
+  const parsePattern = (s:string): number[] =>
+    s.split(/[,\s]+/)
+     .map(v => v.trim())
+     .filter(Boolean)
+     .map(v => parseInt(v, 10))
+     .filter(n => Number.isFinite(n) && n >= 0 && n <= 999)
+     .slice(0, 20);
+
+  const canSave =
+    parsePattern(leftText).length > 0 ||
+    parsePattern(rightText).length > 0;
+
+  const saveNow = () => {
+    if (!found) { onClose(); return; }
+    const leftP  = parsePattern(leftText);
+    const rightP = parsePattern(rightText);
+
+    updatePair(found.id, {
+      left:  { ...found.left,  pattern: leftP,  rev: !!revL },
+      right: { ...found.right, pattern: rightP, rev: !!revR },
+      memo: memo.slice(0, 128),
+    });
+
+    onSaved();
+    onClose();
+  };
+
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={onClose} />
+      <div className="modal-body" style={{ width: "min(620px, 94vw)" }}>
+        <div className="modal-head">
+          <div className="modal-title">左右ペアを編集</div>
+          <button className="modal-x" onClick={onClose}>×</button>
+        </div>
+
+        {!found ? (
+          <div className="modal-content">
+            <div style={{ color:"#EF4444" }}>対象データが見つかりませんでした。</div>
+          </div>
+        ) : (
+          <div className="modal-content" style={{ display:"grid", gap:10 }}>
+            {/* 左 */}
+            <div style={{ display:"grid", gap:6 }}>
+              <div style={{ fontWeight:700 }}>
+                左シリンダー（{found.left.set}）
+                {revL && <span className="rev-badge" style={{ marginLeft:6 }}>逆順</span>}
+              </div>
+              <input
+                value={leftText}
+                onChange={e=>setLeftText(e.target.value.replace(/[^\d,\s]/g,""))}
+                placeholder="例: 4 11（スペース/カンマ区切り）"
+                style={{ width:"100%", height:32, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6 }}
+              />
+              <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                <input type="checkbox" checked={revL} onChange={e=>setRevL(e.target.checked)} />
+                逆順で保存
+              </label>
+            </div>
+
+            {/* 右 */}
+            <div style={{ display:"grid", gap:6 }}>
+              <div style={{ fontWeight:700 }}>
+                右シリンダー（{found.right.set}）
+                {revR && <span className="rev-badge" style={{ marginLeft:6 }}>逆順</span>}
+              </div>
+              <input
+                value={rightText}
+                onChange={e=>setRightText(e.target.value.replace(/[^\d,\s]/g,""))}
+                placeholder="例: 7 12（スペース/カンマ区切り）"
+                style={{ width:"100%", height:32, padding:"2px 8px", border:"1px solid #d1d5db", borderRadius:6 }}
+              />
+              <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                <input type="checkbox" checked={revR} onChange={e=>setRevR(e.target.checked)} />
+                逆順で保存
+              </label>
+            </div>
+
+            {/* メモ */}
+            <div>
+              <textarea
+                value={memo}
+                onChange={(e)=>setMemo(e.target.value.slice(0,128))}
+                placeholder="（任意メモ・128文字まで）"
+                rows={4}
+                style={{ width:"100%", boxSizing:"border-box", border:"1px solid #d1d5db", borderRadius:8, padding:"8px" }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="modal-actions">
+          <button className="btn btn-gray" onClick={onClose}>閉じる</button>
+          <button className="btn btn-blue" onClick={saveNow} disabled={!canSave}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ========= 共通 util ========= */
 function makeHLCx3(hits: Array<{col:number; row:number; matched:number[]; dir:"down"|"up"; matchedRows:number[]}>): Set<string> {
@@ -2091,16 +2508,40 @@ main.app .card .section-title{
   }
 }
 
-/* モーダル */
+/* モーダル（置き換え） */
 .modal{ position:fixed; inset:0; z-index:999; }
 .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
-.modal-body{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-  width:min(560px,92vw); background:#fff; border-radius:var(--radius-modal); box-shadow:0 10px 30px rgba(0,0,0,.25); }
+
+/* ★ ここを変更：高さに上限を付け、ヘッダー/フッター固定・中身だけスクロール */
+.modal-body{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  width:min(620px,94vw);
+  max-height:min(92vh, 720px);      /* ← 画面からはみ出さない上限 */
+  display:flex; flex-direction:column;  /* ← ヘッダー/本文/アクションを縦配置 */
+  background:#fff; border-radius:var(--radius-modal);
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  overscroll-behavior:contain;
+}
+
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
 .modal-x{ margin-left:auto; background: transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
-.modal-content{ padding:12px 14px; }
-.modal-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 14px; border-top:1px solid #e5e7eb; }
+
+/* ★ ここを変更：本文だけスクロール可能に */
+.modal-content{
+  padding:12px 14px;
+  overflow:auto;          /* ← コンテンツだけがスクロール */
+  flex:1 1 auto;          /* ← 余白をここに配分して伸縮 */
+  min-height:0;           /* ← flex 子要素が正しく縮むように */
+}
+
+.modal-actions{
+  display:flex; gap:8px; align-items:center; justify-content:flex-end;
+  padding:12px 14px; border-top:1px solid #e5e7eb;
+  background:#fff;        /* スクロール時に下が透けないように */
+}
+
 `;
 /* 上方向の余白を食い込む（親の padding-top を無効化） */
 const eatTopPadding = () => {
