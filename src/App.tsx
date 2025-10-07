@@ -1001,8 +1001,20 @@ useEffect(() => {}, []);
         <>
           {/* 左 */}
           <section className="card">
-            {/* タイトル + 右上に履歴一覧（保存はホームでは非表示） */}
-            <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
+            {/* 見出し + 履歴一覧（右と同じUI） */}
+<div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+  <div className="section-title" style={{ margin:0 }}>左シリンダー</div>
+  <button
+    className="btn btn-violet"
+    style={{ marginLeft:"auto" }}
+    onClick={()=>setListModal({ open:true, side:"L" })}
+  >
+    履歴一覧
+  </button>
+</div>
+
+{/* 読み込み/エラー表示（従来のまま） */}
+<div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
   {(loading && !(isMobile && route === "home")) && "読込中…"}{" "}
   {(() => {
     const msg = String((error as any)?.message || "");
@@ -1010,6 +1022,7 @@ useEffect(() => {}, []);
     return /404| Not Found/i.test(msg) ? null : `エラー: ${msg}`;
   })()}
 </div>
+
 
 
             {/* 1行目（中央揃え） */}
