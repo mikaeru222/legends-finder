@@ -770,11 +770,21 @@ const hlSplitR = useMemo(
   };
 
   const visColsCx3L = useMemo(()=> visiblePosFromCx3Hits(lHitsCX3, rowIdxL), [lHitsCX3, rowIdxL]);
-  const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIdxR), [rHitsCX3, rowIdxR]);
-  const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
-  const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
+const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIdxR), [rHitsCX3, rowIdxR]);
+const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
+const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
-  
+// ★ ここから追加：左が1列に確定しているか
+const leftHitCol = useMemo(
+  () => (isCxMode(leftSet) && visColsCx3L.length === 1 ? visColsCx3L[0] : null),
+  [leftSet, visColsCx3L]
+);
+
+// 左の確定が外れたらプレビューは閉じる
+useEffect(() => {
+  if (!leftHitCol) setShowPairPreview(false);
+}, [leftHitCol]);
+
 
   // 候補（※既存の type Candidate はそのまま使います）
 function buildLinesForHit(
@@ -1029,11 +1039,17 @@ const [savedVersion, setSavedVersion] = useState(0);
 
 // ★ 保存一覧モーダル（左右ペア）
 const [pairListOpen, setPairListOpen] = useState(false);
-const [pairListQuery, setPairListQuery] = useState(""); // ← 追加（検索キーワード）
+const [pairListQuery, setPairListQuery] = useState("");
 
 // ★ 編集モーダル（左右ペア）
 const [pairEdit, setPairEdit] =
   useState<{ open: boolean; id: string | null }>({ open:false, id:null });
+
+/* === 追加：対の配列プレビュー用 === */
+// モーダルの開閉
+const [showPairPreview, setShowPairPreview] = useState(false);
+// 右側で“任意に表示する列”（位置＝①〜⑫の番号。nullは未選択）
+const [rightPreviewPos, setRightPreviewPos] = useState<number | null>(null);
 
 
 
@@ -1305,10 +1321,21 @@ useEffect(() => {}, []);
 <strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
 
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-<button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+  {/* ★ 追加：左が“1列に確定”した時だけ出す */}
+  {isCxMode(leftSet) && leftHitCol && (
+    <button
+      className="btn"
+      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+      onClick={() => { setRightPreviewPos(rightPreviewPos ?? 1); setShowPairPreview(true); }}
+    >
+      対の配列の表示
+    </button>
+  )}
 
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
 </div>
+
 
 
 
@@ -1472,6 +1499,112 @@ useEffect(() => {}, []);
     onSaved={() => { setPairSaveModal({ open:false }); setSavedVersion(v => v + 1); }}
   />
 )}
+
+{/* ★ 追加：対の配列プレビュー（右列を任意に選んで左右を並べる） */}
+{showPairPreview && isCxMode(leftSet) && leftHitCol && (() => {
+
+  // 左は“確定した1列のみ”を表示
+  const leftPos = leftHitCol; // ステップ1で作った値
+
+  // 右で選べる「位置（①〜⑫）」を作る（行番号列は除外）
+  const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
+  const dataColsR = allCols.filter(c => !rowIdxR.has(c));
+  const viewColsR = Array.from({ length: 12 }, (_, i) => dataColsR[i] ?? null);
+  const rightSelectablePos = viewColsR
+    .map((colIdx, i) => (colIdx ? i + 1 : null))
+    .filter((n): n is number => n !== null);
+
+  // 選択が無効なら先頭をデフォルトに
+  const currentRightPos =
+    (rightPreviewPos && rightSelectablePos.includes(rightPreviewPos))
+      ? rightPreviewPos
+      : (rightSelectablePos[0] ?? null);
+
+  // セレクト変更
+  const onChangeRightPos = (e: any) => {
+    const v = parseInt(String(e.target.value), 10);
+    setRightPreviewPos(Number.isFinite(v) ? v : null);
+  };
+
+  return (
+    <div className="modal">
+      <div className="modal-backdrop" onClick={() => setShowPairPreview(false)} />
+      <div className="modal-body" style={{ width: "min(860px, 96vw)" }}>
+        <div className="modal-head">
+          <div className="modal-title">対の配列の設定</div>
+          <button className="modal-x" onClick={() => setShowPairPreview(false)}>×</button>
+        </div>
+
+        <div className="modal-content" style={{ display:"grid", gap:10 }}>
+          {/* 上部：右列の選択（①〜⑫） */}
+          <div style={{ display:"grid", gap:8 }}>
+            <div style={{ fontWeight:700 }}>シリーズ: {rightSet}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div className="select-wrap">
+                <select
+                  value={currentRightPos ?? ""}
+                  onChange={onChangeRightPos}
+                  style={{ width: 86 }}
+                >
+                  {rightSelectablePos.map(p => (
+                    <option key={p} value={p}>{circledCol(p)}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ fontSize:12, color:"#64748b" }}>
+                左は検索で確定した列を表示（ハイライト有り）／右は任意列のプレビュー（ハイライト無し）
+              </div>
+            </div>
+          </div>
+
+          {/* 下部：左右の列を横に並べて表示 */}
+          <div
+            style={{
+              display:"grid",
+              gridTemplateColumns:"1fr 1fr",
+              gap:12
+            }}
+          >
+            {/* 左（確定・ハイライト有り） */}
+            <div>
+              <div style={{ fontWeight:700, marginBottom:6 }}>左（{leftSet}）</div>
+              <GridCx3
+                positions={posL}
+                rowIndexCols={rowIdxL}
+                getRarityForKey={rarityStrictFor(leftSet)}
+                getNameForKey={nameLooseFor(leftSet)}
+                highlight={hlCx3L}
+                visibleCols={[leftPos]}          // ← 1列だけ表示
+                highlightGood={hlSplitL.good}    // ← ハイライト有り
+                highlightNone={hlSplitL.none}
+              />
+            </div>
+
+            {/* 右（任意列・ハイライト無し） */}
+            <div>
+              <div style={{ fontWeight:700, marginBottom:6 }}>右（{rightSet}）</div>
+              <GridCx3
+                positions={posR}
+                rowIndexCols={rowIdxR}
+                getRarityForKey={rarityStrictFor(rightSet)}
+                getNameForKey={nameLooseFor(rightSet)}
+                highlight={new Set()}            // ← 右はハイライト無し
+                visibleCols={currentRightPos ? [currentRightPos] : []}
+                highlightGood={new Set()}        // ← 右は強調ゼロ
+                highlightNone={new Set()}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-gray" onClick={() => setShowPairPreview(false)}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+
 
 {/* 追加：左右ペアの保存一覧（描画） */}
 {pairListOpen && (() => {
@@ -2412,21 +2545,29 @@ select::-ms-expand{ display:none; }
   min-width:var(--btn-minw) !important; font-size:16px !important; font-weight:700 !important;
 }
 
-/* === CX3 セレクトの二重枠を解消（このブロックを追記） === */
+/* === CX セレクトの二重枠を解消 === */
 .select-wrap{
-  /* 外側の1本だけ表示 */
-  border: 1px solid #d1d5db !important;
-}
-.select-wrap select{
-  /* 中の枠・影・背景を消す */
+  /* ラッパー側の枠は消す */
   border: 0 !important;
-  border-color: transparent !important;
   background: transparent !important;
+}
+
+.select-wrap > select{
+  /* 枠は select 本体だけに出す */
+  border: 1px solid #d1d5db !important;
+  border-radius: var(--radius-ctrl) !important;
+  background: #fff !important;
   box-shadow: none !important;
   outline: none !important;
-  /* 右側の▼分の余白（お好みで） */
-  padding-right: 24px !important;
+  padding-right: 24px !important; /* ▼分の余白 */
 }
+
+.select-wrap > select:focus,
+.select-wrap > select:focus-visible{
+  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
+  outline: none !important;
+}
+
 .select-wrap select:focus,
 .select-wrap select:focus-visible{
   /* フォーカス時は薄い内側ハイライトだけ（任意） */
@@ -2562,6 +2703,56 @@ if (document.readyState === 'loading') {
 window.addEventListener('resize', eatTopPadding, { passive:true });
 new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 })();
+
+// === 追加：セレクト見た目を「番号」と完全同一サイズに（崩れ補正） ===
+(function injectSelectFixV2(){
+  const id = "legends-select-fix-v2";
+  let el = document.getElementById(id) as HTMLStyleElement | null;
+  if (!el) { el = document.createElement("style"); el.id = id; document.head.appendChild(el); }
+  el.textContent = `
+  /* ラッパーにだけ枠を出す（番号と同じ枠/角丸/高さ） */
+  .select-wrap{
+    position:relative; display:inline-flex; align-items:center; justify-content:center;
+    width:${SEL_FIXED_PX}px !important; min-width:${SEL_FIXED_PX}px !important; max-width:${SEL_FIXED_PX}px !important;
+    height:var(--ctrl-h) !important;
+    background:#fff !important;
+    border:1px solid #d1d5db !important;
+    border-radius:var(--radius-ctrl) !important;
+    box-shadow:none !important;
+    overflow:visible !important;
+  }
+  .select-wrap::after{
+    content:""; position:absolute; pointer-events:none;
+    right:6px; top:50%; transform:translateY(-35%);
+    width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:6px solid #55667a;
+  }
+  /* select 本体は枠なし・高さは枠の内側にピッタリ */
+  .select-wrap > select{
+    display:block !important;
+    width:100% !important;
+    height:calc(var(--ctrl-h) - 2px) !important;  /* 枠線(1px×上下)ぶんを内側で相殺 */
+    margin:0 !important;
+    padding:0 24px 0 10px !important;            /* 右は▼の余白 */
+    border:0 !important;
+    background:transparent !important;
+    background-image:none !important;
+    box-shadow:none !important;
+    outline:none !important;
+    appearance:none !important; -webkit-appearance:none !important; -moz-appearance:none !important;
+    box-sizing:border-box !important;
+    font-size:16px !important;
+    line-height:calc(var(--ctrl-h) - 2px) !important;
+    text-align:center !important;
+    text-align-last:center !important;           /* 表示も中央寄せ */
+  }
+  .select-wrap > select:focus,
+  .select-wrap > select:focus-visible{
+    box-shadow:none !important;
+    outline:none !important;
+  }
+  `;
+})();
+
 
 /* === 幅ロック：後からCSSが当たっても常に上書き === */
 (function lockSelectWidthForever(){
