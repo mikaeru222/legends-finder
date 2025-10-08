@@ -1,4 +1,0 @@
-  feat/cx3-hit-cols-and-name-col[m 4146211 [[34morigin/feat/cx3-hit-cols-and-name-col[m] feat(cx3): ヒット列のみ表示 & 1列時は隣にカード名列 / ホーム候補=最短4件を統一
-* [32mmain                          [m 7d44204 [[34morigin/main[m: behind 1] feat: ペア保存/編集保存一覧など一式
-  work/legends-cx4-fix          [m 7d47648 [[34morigin/work/legends-cx4-fix[m] feat(cx4): add CX4 data/positions and rarity groups; update App.tsx & rarity mapping
-  work/next-feature             [m 52546db Merge pull request #2 from mikaeru222/work/legends-cx4-fix
