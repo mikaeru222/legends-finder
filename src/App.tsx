@@ -2055,12 +2055,30 @@ function GridCx3({
     const text = `${raw} [${label}]${name ? ` ${name}` : ""}`;
 
     return (
-      <div title={text}
-        style={{ display:"block", width:"100%", boxSizing:"border-box", background:bg, color:fg,
-                 border:"1px solid rgba(0,0,0,0.10)", borderRadius:4, padding:"2px 6px" }}>
-        {text}
-      </div>
-    );
+  <div
+  title={text}
+  style={{
+    display: "block",
+    width: "100%",
+    boxSizing: "border-box",
+    background: bg,
+    color: fg,
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 4,
+    padding: "2px 6px",
+
+    /* ここを追加 */
+    whiteSpace: "normal",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
+    lineHeight: 1.25,
+  }}
+>
+  {text}
+</div>
+
+);
+
   };
 
   return (
@@ -2149,12 +2167,29 @@ const isHLnone = keyStr ? (highlightNone?.has?.(keyStr) ?? false) : false;
                           const fg = "#111";
 
                           return (
-                            <div key={idx}
-                              style={{ display:"block", padding:"0 2px", borderRadius:3, fontSize:10, lineHeight:1.3,
-                                       background:bg, color:fg, border:"1px solid rgba(0,0,0,0.06)", textAlign:"center" }}>
-                              {k}
-                            </div>
-                          );
+  <div
+    key={idx}
+    style={{
+      display: "block",
+      padding: "0 2px",
+      borderRadius: 3,
+      fontSize: 10,
+      lineHeight: 1.3,
+      background: bg,
+      color: fg,
+      border: "1px solid rgba(0,0,0,0.06)",
+      textAlign: "center",
+
+      /* ここを追加：必ず折り返す */
+      whiteSpace: "normal",
+      wordBreak: "break-word",
+      overflowWrap: "anywhere",
+    }}
+  >
+    {k}
+  </div>
+);
+
                         })}
                       </div>
                     )}
@@ -2794,7 +2829,7 @@ main.app .card .section-title{
   .grid-wrap .grid th:first-child,
   .grid-wrap .grid td.rowhead,
   .grid-wrap .grid td:first-child{
-    width:30px !important; max-width:30px !important;
+    width:24px !important; max-width:30px !important;
   }
 }
 
