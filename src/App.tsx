@@ -1403,36 +1403,43 @@ function applySavedPair(p: SavedPair) {
       )}
 
       {route === "leftResults" && (
-        <section className="card">
-          <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
-            <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-            {/* ここを置換 */}
-<strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
+  <section className="card">
+    {/* ▼ ヘッダー置き換えブロック（ここから） */}
+    <div style={{ display:"grid", gap:8, marginBottom:8 }}>
+      {/* 1段目：戻る + 右寄せボタン。幅が足りない時はボタンだけ折り返し */}
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
 
-           <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-  {/* ★ 左が“1列に確定”した時だけ出す（左→右モード） */}
-  {isCxMode(leftSet) && leftHitCol && (
-    <button
-      className="btn"
-      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-      onClick={() => {
-        setPairFrom("L");                          // 起点＝左
-        setRightPreviewPos(pairMate(leftHitCol));  // 任意（右）は相方から開始
-        setShowPairPreview(true);
-      }}
-    >
-      対の配列の表示
-    </button>
-  )}
+        <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
+          {/* 右が1列に確定した時だけ出す */}
+          {isCxMode(rightSet) && rightHitCol && (
+            <button
+              className="btn"
+              style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+              onClick={() => {
+                setPairFrom("R");
+                setPairPreviewL(pairMate(rightHitCol));
+                setShowPairPreview(true);
+              }}
+            >
+              対の配列の表示
+            </button>
+          )}
 
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-</div>
+          <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+          <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+        </div>
+      </div>
 
+      {/* 2段目：タイトルをボタン列の“下”に固定表示 */}
+      <div>
+        <strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
+      </div>
+    </div>
+    {/* ▲ ヘッダー置き換えブロック（ここまで） */}
 
+    {/* …この下にパターンのピルや ResultList, GridCx3 が続く… */}
 
-
-          </div>
 
           {!!lQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
@@ -1476,37 +1483,28 @@ function applySavedPair(p: SavedPair) {
       )}
 
       {route === "rightResults" && (
-        <section className="card">
-          <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
-            <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-            {/* ここを置換 */}
-<strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
+  <section className="card">
+    {/* ▼ ヘッダー置き換えブロック（ここから） */}
+    <div style={{ display:"grid", gap:8, marginBottom:8 }}>
+      {/* 1段目：戻る + 右寄せボタン（幅が足りない時はボタンだけ折り返し） */}
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
 
-            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-  {/* ★ 右が“1列に確定”した時だけ出す（右→左モード） */}
-  {isCxMode(rightSet) && rightHitCol && (
-    <button
-      className="btn"
-      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-      onClick={() => {
-        setPairFrom("R");                         // 起点＝右
-        setPairPreviewL(pairMate(rightHitCol));   // 任意（左）は相方から開始
-        setShowPairPreview(true);
-      }}
-    >
-      対の配列の表示
-    </button>
-  )}
+        <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
+          <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+          <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+        </div>
+      </div>
 
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-</div>
+      {/* 2段目：タイトル */}
+      <div>
+        <strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
+      </div>
+    </div>
+    {/* ▲ ヘッダー置き換えブロック（ここまで） */}
 
+    {/* …以下、右の内容… */}
 
-
-
-
-          </div>
 
           {!!rQuery.length && (
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
