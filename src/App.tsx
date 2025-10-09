@@ -1411,24 +1411,25 @@ function applySavedPair(p: SavedPair) {
         <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
 
         <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
-          {/* 右が1列に確定した時だけ出す */}
-          {isCxMode(rightSet) && rightHitCol && (
-            <button
-              className="btn"
-              style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-              onClick={() => {
-                setPairFrom("R");
-                setPairPreviewL(pairMate(rightHitCol));
-                setShowPairPreview(true);
-              }}
-            >
-              対の配列の表示
-            </button>
-          )}
+  {/* ★ 左が1列に確定した時だけ出す（左→右モード） */}
+  {isCxMode(leftSet) && leftHitCol && (
+    <button
+      className="btn"
+      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+      onClick={() => {
+        setPairFrom("L");                           // 起点＝左
+        setRightPreviewPos(pairMate(leftHitCol));   // 右の初期列＝左の相方
+        setShowPairPreview(true);
+      }}
+    >
+      対の配列の表示
+    </button>
+  )}
 
-          <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-          <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-        </div>
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+</div>
+
       </div>
 
       {/* 2段目：タイトルをボタン列の“下”に固定表示 */}
@@ -1491,9 +1492,25 @@ function applySavedPair(p: SavedPair) {
         <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
 
         <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
-          <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-          <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-        </div>
+  {/* ★ 右が“1列に確定”した時だけ出す（右→左モード） */}
+  {isCxMode(rightSet) && rightHitCol && (
+    <button
+      className="btn"
+      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+      onClick={() => {
+        setPairFrom("R");                         // 起点＝右
+        setPairPreviewL(pairMate(rightHitCol));   // 左の初期表示＝右の相方列
+        setShowPairPreview(true);                 // プレビューモーダルを開く
+      }}
+    >
+      対の配列の表示
+    </button>
+  )}
+
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+</div>
+
       </div>
 
       {/* 2段目：タイトル */}
