@@ -584,6 +584,20 @@ const nameLooseFor = (setKey: string) => (rawToken: string) => {
   const rowIdxL = useMemo(()=> /CX4|XC4|CX-4/i.test(leftSet) ? rowIndexColsCX4 : rowIndexCols,  [leftSet,rowIndexCols,rowIndexColsCX4]);
   const rowIdxR = useMemo(()=> /CX4|XC4|CX-4/i.test(rightSet)? rowIndexColsCX4 : rowIndexCols,  [rightSet,rowIndexCols,rowIndexColsCX4]);
 
+// --- 対の配列モーダル用：選択肢（①〜）を作る ---
+// 左グリッドで選べる番号（行番号列は除外してカウント）
+const dataPosColsL = useMemo(() => {
+  const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdxL.has(c));
+  return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①..N
+}, [rowIdxL]);
+
+// 右グリッドで選べる番号（行番号列は除外してカウント）
+const dataPosColsR = useMemo(() => {
+  const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdxR.has(c));
+  return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①..N
+}, [rowIdxR]);
+
+
   /* ===== 連番判定（空行だけスキップ） ===== */
   type Cx3Hit = {
     col: number;
@@ -774,16 +788,27 @@ const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIdxR), [rHit
 const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
 const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
-// ★ ここから追加：左が1列に確定しているか
+// ★ 左が1列に確定
 const leftHitCol = useMemo(
   () => (isCxMode(leftSet) && visColsCx3L.length === 1 ? visColsCx3L[0] : null),
   [leftSet, visColsCx3L]
 );
 
-// 左の確定が外れたらプレビューは閉じる
+// ★ 追加：右が1列に確定
+const rightHitCol = useMemo(
+  () => (isCxMode(rightSet) && visColsCx3R.length === 1 ? visColsCx3R[0] : null),
+  [rightSet, visColsCx3R]
+);
+
+// ★ 追加：どちら側から開いたか（L:左→右 / R:右→左）
+const [pairFrom, setPairFrom] = useState<"L" | "R">("L");
+
+// ★ 起点側の確定が外れたらプレビューを閉じる
 useEffect(() => {
-  if (!leftHitCol) setShowPairPreview(false);
-}, [leftHitCol]);
+  if (pairFrom === "L" && !leftHitCol)  setShowPairPreview(false);
+  if (pairFrom === "R" && !rightHitCol) setShowPairPreview(false);
+}, [pairFrom, leftHitCol, rightHitCol]);
+
 
 
   // 候補（※既存の type Candidate はそのまま使います）
@@ -1031,6 +1056,24 @@ const buildSuggestions = (
   const [listModal, setListModal] =
   useState<{ open: boolean; side: "L" | "R" | null }>({ open: false, side: null });
 
+  // ★ 対の配列プレビュー用（左結果→右列 / 右結果→左列）
+const [pairPreviewR, setPairPreviewR] = useState<number | null>(null); // 左結果で表示する“右”の任意列
+const [pairPreviewL, setPairPreviewL] = useState<number | null>(null); // 右結果で表示する“左”の任意列
+
+// ★ どちら側の列を選ぶモーダルか（'R'＝右列を選ぶ／'L'＝左列を選ぶ）
+const [pairPicker, setPairPicker] = useState<null | 'R' | 'L'>(null);
+// 選択UIの一時値（モーダル内のセレクト）
+const [pairPickPos, setPairPickPos] = useState<number>(1);
+
+// モーダルを開いたタイミングで既存値を初期選択に
+useEffect(() => {
+  if (pairPicker === 'R') setPairPickPos(pairPreviewR || 1);
+  if (pairPicker === 'L') setPairPickPos(pairPreviewL || 1);
+}, [pairPicker]);
+
+// セット変更や画面遷移でプレビューは一旦クリア
+useEffect(() => { setPairPreviewR(null); setPairPreviewL(null); }, [leftSet, rightSet, route]);
+
 // ★ ペア保存モーダル
 const [pairSaveModal, setPairSaveModal] = useState<{ open: boolean }>({ open: false });
 
@@ -1051,6 +1094,13 @@ const [showPairPreview, setShowPairPreview] = useState(false);
 // 右側で“任意に表示する列”（位置＝①〜⑫の番号。nullは未選択）
 const [rightPreviewPos, setRightPreviewPos] = useState<number | null>(null);
 
+// ★ 追加：2本1セットの相方（1↔2, 3↔4, …, 11↔12）
+const pairMate = (col?: number | null) => {
+  if (!col || !Number.isFinite(col)) return 1;
+  return col % 2 === 0 ? col - 1 : col + 1;
+};
+
+
 
 
 
@@ -1065,11 +1115,50 @@ const currentPatternFor = (side: "L" | "R"): number[] => {
   return out;  // 未入力なら [] を返す（前回の検索値には戻らない）
 };
 
+
   /* ================= DL版：ショートカット（無効化） ================= */
 useEffect(() => {}, []);
 /* ================= /DL版 ================= */
 
+// === IIFE撤去の準備：左右ペア一覧の取得＆フィルタ ===
+const pairList = useMemo(() => loadPairs(), [savedVersion, pairListOpen]);
 
+const filteredPairs = useMemo(() => {
+  const list = pairList;
+  const q = pairListQuery.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter(it => {
+    const ts = new Date(it.ts).toLocaleString("ja-JP");
+    const leftPat  = it.left.pattern.join(" ");
+    const rightPat = it.right.pattern.join(" ");
+    return (
+      (it.memo || "").toLowerCase().includes(q) ||
+      it.left.set.toLowerCase().includes(q) ||
+      it.right.set.toLowerCase().includes(q) ||
+      leftPat.includes(q) || rightPat.includes(q) ||
+      ts.includes(q)
+    );
+  });
+}, [pairList, pairListQuery]);
+
+// ★ 追加：保存した左右ペアを一発適用する
+function applySavedPair(p: SavedPair) {
+  // 左セット適用
+  setLeftSet(p.left.set);
+  setCandLDigits(p.left.pattern);
+  setLQuery(p.left.pattern);
+  setDirL(p.left.rev ? "up" : "down");
+
+  // 右セット適用
+  setRightSet(p.right.set);
+  setCandRDigits(p.right.pattern);
+  setRQuery(p.right.pattern);
+  setDirR(p.right.rev ? "up" : "down");
+
+  // 一覧を閉じて左結果へ（好みで右結果でもOK）
+  setPairListOpen(false);
+  nav("leftResults");
+}
 
   return (
     <main className="app">
@@ -1320,13 +1409,17 @@ useEffect(() => {}, []);
             {/* ここを置換 */}
 <strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
 
-            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-  {/* ★ 追加：左が“1列に確定”した時だけ出す */}
+           <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+  {/* ★ 左が“1列に確定”した時だけ出す（左→右モード） */}
   {isCxMode(leftSet) && leftHitCol && (
     <button
       className="btn"
       style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-      onClick={() => { setRightPreviewPos(rightPreviewPos ?? 1); setShowPairPreview(true); }}
+      onClick={() => {
+        setPairFrom("L");                          // 起点＝左
+        setRightPreviewPos(pairMate(leftHitCol));  // 任意（右）は相方から開始
+        setShowPairPreview(true);
+      }}
     >
       対の配列の表示
     </button>
@@ -1335,8 +1428,6 @@ useEffect(() => {}, []);
   <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
   <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
 </div>
-
-
 
 
 
@@ -1392,9 +1483,23 @@ useEffect(() => {}, []);
 <strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
 
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-<button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+  {/* ★ 右が“1列に確定”した時だけ出す（右→左モード） */}
+  {isCxMode(rightSet) && rightHitCol && (
+    <button
+      className="btn"
+      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+      onClick={() => {
+        setPairFrom("R");                         // 起点＝右
+        setPairPreviewL(pairMate(rightHitCol));   // 任意（左）は相方から開始
+        setShowPairPreview(true);
+      }}
+    >
+      対の配列の表示
+    </button>
+  )}
 
+  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
 </div>
 
 
@@ -1453,21 +1558,21 @@ useEffect(() => {}, []);
           onClose={()=>setListModal({open:false, side:null})}
           onEdit={(id)=>{ setSaveModal({open:true, side:listModal.side, editId:id}); }}
           onDelete={(id)=>{ removeSavedEntry(listModal.side!, listModal.side==="L"?leftSet:rightSet, id); setSavedVersion(v=>v+1); }}
-          onApply={(it)=>{
-  const pat = it.pattern;
+          onApply={(pat, rev)=>{
   if (listModal.side==="L") {
     setCandLDigits(pat);
     setLQuery(pat);
-    setDirL(it.rev ? "up" : "down");
+    setDirL(rev ? "up" : "down");
     nav("leftResults");
   } else {
     setCandRDigits(pat);
     setRQuery(pat);
-    setDirR(it.rev ? "up" : "down");
+    setDirR(rev ? "up" : "down");
     nav("rightResults");
   }
   setListModal({open:false, side:null});
 }}
+
 
         />
       )}
@@ -1500,218 +1605,217 @@ useEffect(() => {}, []);
   />
 )}
 
-{/* ★ 追加：対の配列プレビュー（右列を任意に選んで左右を並べる） */}
-{showPairPreview && isCxMode(leftSet) && leftHitCol && (() => {
+{/* ★ 対の配列プレビュー（左右対応） */}
+{(() => {
+  const canShow =
+    showPairPreview &&
+    (pairFrom === "L"
+      ? (isCxMode(leftSet) && leftHitCol)
+      : (isCxMode(rightSet) && rightHitCol));
 
-  // 左は“確定した1列のみ”を表示
-  const leftPos = leftHitCol; // ステップ1で作った値
+  if (!canShow) return null;
 
-  // 右で選べる「位置（①〜⑫）」を作る（行番号列は除外）
-  const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
-  const dataColsR = allCols.filter(c => !rowIdxR.has(c));
-  const viewColsR = Array.from({ length: 12 }, (_, i) => dataColsR[i] ?? null);
-  const rightSelectablePos = viewColsR
-    .map((colIdx, i) => (colIdx ? i + 1 : null))
-    .filter((n): n is number => n !== null);
+  if (pairFrom === "L") {
+    // ===== 左→右（従来） =====
+    const leftPos = leftHitCol!;
+    const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
+    const dataColsR = allCols.filter(c => !rowIdxR.has(c));
+    const viewColsR = Array.from({ length: 12 }, (_, i) => dataColsR[i] ?? null);
+    const rightSelectablePos = viewColsR.map((colIdx, i) => (colIdx ? i + 1 : null)).filter((n): n is number => n !== null);
 
-  // 選択が無効なら先頭をデフォルトに
-  const currentRightPos =
-    (rightPreviewPos && rightSelectablePos.includes(rightPreviewPos))
-      ? rightPreviewPos
-      : (rightSelectablePos[0] ?? null);
+    const currentRightPos =
+      (rightPreviewPos && rightSelectablePos.includes(rightPreviewPos))
+        ? rightPreviewPos
+        : (rightSelectablePos[0] ?? null);
 
-  // セレクト変更
-  const onChangeRightPos = (e: any) => {
-    const v = parseInt(String(e.target.value), 10);
-    setRightPreviewPos(Number.isFinite(v) ? v : null);
-  };
+    const onChangeRightPos = (e: any) => {
+      const v = parseInt(String(e.target.value), 10);
+      setRightPreviewPos(Number.isFinite(v) ? v : null);
+    };
 
-  return (
-    <div className="modal">
-      <div className="modal-backdrop" onClick={() => setShowPairPreview(false)} />
-      <div className="modal-body" style={{ width: "min(860px, 96vw)" }}>
-        <div className="modal-head">
-          <div className="modal-title">対の配列の設定</div>
-          <button className="modal-x" onClick={() => setShowPairPreview(false)}>×</button>
-        </div>
+    return (
+      <div className="modal">
+        <div className="modal-backdrop" onClick={() => setShowPairPreview(false)} />
+        <div className="modal-body" style={{ width: "min(860px, 96vw)" }}>
+          <div className="modal-head">
+            <div className="modal-title">対の配列の設定</div>
+            <button className="modal-x" onClick={() => setShowPairPreview(false)}>×</button>
+          </div>
 
-        <div className="modal-content" style={{ display:"grid", gap:10 }}>
-          {/* 上部：右列の選択（①〜⑫） */}
-          <div style={{ display:"grid", gap:8 }}>
-            <div style={{ fontWeight:700 }}>シリーズ: {rightSet}</div>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div className="select-wrap">
-                <select
-                  value={currentRightPos ?? ""}
-                  onChange={onChangeRightPos}
-                  style={{ width: 86 }}
-                >
-                  {rightSelectablePos.map(p => (
-                    <option key={p} value={p}>{circledCol(p)}</option>
-                  ))}
-                </select>
+          <div className="modal-content" style={{ display:"grid", gap:10 }}>
+            {/* 右の選択 */}
+            <div style={{ display:"grid", gap:8 }}>
+              <div style={{ fontWeight:700 }}>シリーズ: {rightSet}</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div className="select-wrap">
+                  <select value={currentRightPos ?? ""} onChange={onChangeRightPos} style={{ width: 86 }}>
+                    {rightSelectablePos.map(p => (<option key={p} value={p}>{circledCol(p)}</option>))}
+                  </select>
+                </div>
+                <div style={{ fontSize:12, color:"#64748b" }}>
+                  左は検索で確定した列（ハイライト有）／右は任意列（ハイライト無）
+                </div>
               </div>
-              <div style={{ fontSize:12, color:"#64748b" }}>
-                左は検索で確定した列を表示（ハイライト有り）／右は任意列のプレビュー（ハイライト無し）
+            </div>
+
+            {/* プレビュー本体 */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              {/* 左＝固定（ハイライト有） */}
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>左（{leftSet}）</div>
+                <GridCx3
+                  positions={posL} rowIndexCols={rowIdxL}
+                  getRarityForKey={rarityStrictFor(leftSet)} getNameForKey={nameLooseFor(leftSet)}
+                  highlight={hlCx3L} visibleCols={[leftPos]}
+                  highlightGood={hlSplitL.good} highlightNone={hlSplitL.none}
+                />
+              </div>
+              {/* 右＝任意（ハイライト無） */}
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>右（{rightSet}）</div>
+                <GridCx3
+                  positions={posR} rowIndexCols={rowIdxR}
+                  getRarityForKey={rarityStrictFor(rightSet)} getNameForKey={nameLooseFor(rightSet)}
+                  highlight={new Set()} visibleCols={currentRightPos ? [currentRightPos] : []}
+                  highlightGood={new Set()} highlightNone={new Set()}
+                />
               </div>
             </div>
           </div>
 
-          {/* 下部：左右の列を横に並べて表示 */}
-          <div
-            style={{
-              display:"grid",
-              gridTemplateColumns:"1fr 1fr",
-              gap:12
-            }}
-          >
-            {/* 左（確定・ハイライト有り） */}
-            <div>
-              <div style={{ fontWeight:700, marginBottom:6 }}>左（{leftSet}）</div>
-              <GridCx3
-                positions={posL}
-                rowIndexCols={rowIdxL}
-                getRarityForKey={rarityStrictFor(leftSet)}
-                getNameForKey={nameLooseFor(leftSet)}
-                highlight={hlCx3L}
-                visibleCols={[leftPos]}          // ← 1列だけ表示
-                highlightGood={hlSplitL.good}    // ← ハイライト有り
-                highlightNone={hlSplitL.none}
-              />
-            </div>
-
-            {/* 右（任意列・ハイライト無し） */}
-            <div>
-              <div style={{ fontWeight:700, marginBottom:6 }}>右（{rightSet}）</div>
-              <GridCx3
-                positions={posR}
-                rowIndexCols={rowIdxR}
-                getRarityForKey={rarityStrictFor(rightSet)}
-                getNameForKey={nameLooseFor(rightSet)}
-                highlight={new Set()}            // ← 右はハイライト無し
-                visibleCols={currentRightPos ? [currentRightPos] : []}
-                highlightGood={new Set()}        // ← 右は強調ゼロ
-                highlightNone={new Set()}
-              />
-            </div>
+          <div className="modal-actions">
+            <button className="btn btn-gray" onClick={() => setShowPairPreview(false)}>閉じる</button>
           </div>
-        </div>
-
-        <div className="modal-actions">
-          <button className="btn btn-gray" onClick={() => setShowPairPreview(false)}>閉じる</button>
         </div>
       </div>
-    </div>
-  );
-})()}
+    );
+  } else {
+    // ===== 右→左（新規） =====
+    const rightPos = rightHitCol!;
+    const allCols  = Array.from({ length: 12 }, (_, i) => i + 1);
+    const dataColsL = allCols.filter(c => !rowIdxL.has(c));
+    const viewColsL = Array.from({ length: 12 }, (_, i) => dataColsL[i] ?? null);
+    const leftSelectablePos = viewColsL.map((colIdx, i) => (colIdx ? i + 1 : null)).filter((n): n is number => n !== null);
 
+    const currentLeftPos =
+      (pairPreviewL && leftSelectablePos.includes(pairPreviewL))
+        ? pairPreviewL
+        : (leftSelectablePos[0] ?? null);
+
+    const onChangeLeftPos = (e: any) => {
+      const v = parseInt(String(e.target.value), 10);
+      setPairPreviewL(Number.isFinite(v) ? v : null);
+    };
+
+    return (
+      <div className="modal">
+        <div className="modal-backdrop" onClick={() => setShowPairPreview(false)} />
+        <div className="modal-body" style={{ width: "min(860px, 96vw)" }}>
+          <div className="modal-head">
+            <div className="modal-title">対の配列の設定</div>
+            <button className="modal-x" onClick={() => setShowPairPreview(false)}>×</button>
+          </div>
+
+          <div className="modal-content" style={{ display:"grid", gap:10 }}>
+            {/* 左の選択（任意） */}
+            <div style={{ display:"grid", gap:8 }}>
+              <div style={{ fontWeight:700 }}>シリーズ: {leftSet}</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div className="select-wrap">
+                  <select value={currentLeftPos ?? ""} onChange={onChangeLeftPos} style={{ width: 86 }}>
+                    {leftSelectablePos.map(p => (<option key={p} value={p}>{circledCol(p)}</option>))}
+                  </select>
+                </div>
+                <div style={{ fontSize:12, color:"#64748b" }}>
+                  右は検索で確定した列（ハイライト有）／左は任意列（ハイライト無）
+                </div>
+              </div>
+            </div>
+
+            {/* プレビュー本体 */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              {/* 左＝任意（ハイライト無） */}
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>左（{leftSet}）</div>
+                <GridCx3
+                  positions={posL} rowIndexCols={rowIdxL}
+                  getRarityForKey={rarityStrictFor(leftSet)} getNameForKey={nameLooseFor(leftSet)}
+                  highlight={new Set()} visibleCols={currentLeftPos ? [currentLeftPos] : []}
+                  highlightGood={new Set()} highlightNone={new Set()}
+                />
+              </div>
+              {/* 右＝固定（ハイライト有） */}
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>右（{rightSet}）</div>
+                <GridCx3
+                  positions={posR} rowIndexCols={rowIdxR}
+                  getRarityForKey={rarityStrictFor(rightSet)} getNameForKey={nameLooseFor(rightSet)}
+                  highlight={hlCx3R} visibleCols={[rightPos]}
+                  highlightGood={hlSplitR.good} highlightNone={hlSplitR.none}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-actions">
+            <button className="btn btn-gray" onClick={() => setShowPairPreview(false)}>閉じる</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+})()}
 
 {/* 追加：左右ペアの保存一覧（描画） */}
-{pairListOpen && (() => {
-  
-  const list = loadPairs(); // 毎回読み直し（削除後は setSavedVersion で再描画）
+{pairListOpen && (
+  <div className="modal">
+    <div className="modal-backdrop" onClick={()=>setPairListOpen(false)} />
+    <div className="modal-body" style={{ width: "min(720px, 94vw)" }}>
+      <div className="modal-head">
+        <div className="modal-title">保存一覧（左右ペア）</div>
+        <button className="modal-x" onClick={()=>setPairListOpen(false)}>×</button>
+      </div>
 
-  // ← ここから貼る
-  const q = pairListQuery.trim().toLowerCase();
-  const filtered = !q ? list : list.filter(it => {
-    const ts = new Date(it.ts).toLocaleString("ja-JP");
-    const leftPat  = it.left.pattern.join(" ");
-    const rightPat = it.right.pattern.join(" ");
-    return (
-      (it.memo || "").toLowerCase().includes(q) ||
-      it.left.set.toLowerCase().includes(q) ||
-      it.right.set.toLowerCase().includes(q) ||
-      leftPat.includes(q) || rightPat.includes(q) ||
-      ts.includes(q)
-    );
-  });
-  // ← ここまで
+      <div className="modal-content" style={{ display:"grid", gap:8 }}>
+        {filteredPairs.length === 0 && (
+          <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>
+        )}
 
-
-  const applyPair = (it: SavedPair) => {
-    // セットを反映
-    setLeftSet(it.left.set);
-    setRightSet(it.right.set);
-
-    // パターンと方向を反映
-    setCandLDigits(it.left.pattern);
-    setLQuery(it.left.pattern);
-    setDirL(it.left.rev ? "up" : "down");
-
-    setCandRDigits(it.right.pattern);
-    setRQuery(it.right.pattern);
-    setDirR(it.right.rev ? "up" : "down");
-
-    setPairListOpen(false);
-    nav("leftResults"); // 左結果へ移動（必要なら rightResults に変えてもOK）
-  };
-
-  const delPair = (id: string) => {
-    removePair(id);
-    setSavedVersion(v => v + 1); // 再描画トリガー
-  };
-
-  const fmt = (pat:number[], rev?:boolean) =>
-    (rev ? [...pat].slice().reverse() : pat).join(" → ");
-
-  return (
-    <div className="modal">
-      <div className="modal-backdrop" onClick={()=>setPairListOpen(false)} />
-      <div className="modal-body" style={{ width: "min(720px, 94vw)" }}>
-        <div className="modal-head">
-          <div className="modal-title">保存一覧（左右ペア）</div>
-          <button className="modal-x" onClick={()=>setPairListOpen(false)}>×</button>
-        </div>
-
-        <div className="modal-content" style={{ display:"grid", gap:8 }}>
-          {!list.length && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
-
-          {list.map(it => (
-            <div key={it.id}
-                 style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-                <strong>左（{it.left.set}）{it.left.rev && <span className="rev-badge" style={{marginLeft:6}}>逆順</span>}：</strong>
-                <span>{fmt(it.left.pattern, it.left.rev)}</span>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginTop:4 }}>
-                <strong>右（{it.right.set}）{it.right.rev && <span className="rev-badge" style={{marginLeft:6}}>逆順</span>}：</strong>
-                <span>{fmt(it.right.pattern, it.right.rev)}</span>
-              </div>
-              {it.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{it.memo}</div>}
-
-              <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
-  <button className="btn btn-blue" onClick={()=>applyPair(it)}>適用</button>
-  <button className="btn btn-teal" onClick={()=>setPairEdit({ open:true, id: it.id })}>編集</button>
-  <button className="btn btn-gray" onClick={()=>delPair(it.id)}>削除</button>
-</div>
-
-
-              <div style={{ marginTop:6, fontSize:12, color:"#64748b" }}>
-                {new Date(it.ts).toLocaleString("ja-JP")}
-              </div>
-            </div>
-          ))}
-
-          {/* 追加：左右ペアの“編集”モーダルを表示 */}
-{pairEdit.open && pairEdit.id && (
-  <PairEditModal
-    id={pairEdit.id}
-    onClose={() => setPairEdit({ open:false, id:null })}
-    onSaved={() => {
-      setPairEdit({ open:false, id:null });
-      setSavedVersion(v => v + 1);
-    }}
+        {filteredPairs.map(pair => (
+  <PairRow
+    key={pair.id}
+    pair={pair}
+    onApply={applySavedPair}
+    onEdit={(id) => setPairEdit({ open:true, id })}
+    onDelete={(id) => { removePair(id); setSavedVersion(v => v + 1); }}
   />
-)}
-        </div>
+))}
 
-        <div className="modal-actions">
-          <button className="btn btn-gray" onClick={()=>setPairListOpen(false)}>閉じる</button>
-        </div>
+
+        {pairEdit.open && pairEdit.id && (
+          <PairEditModal
+            id={pairEdit.id}
+            onClose={() => setPairEdit({ open:false, id:null })}
+            onSaved={() => {
+              setPairEdit({ open:false, id:null });
+              setSavedVersion(v => v + 1);
+            }}
+          />
+        )}
+      </div>
+
+      <div className="modal-actions">
+        <button className="btn btn-gray" onClick={()=>setPairListOpen(false)}>閉じる</button>
       </div>
     </div>
-  );
-})()}
+  </div>
+)}
+
+
+
+  
+        
+         
 
 
       <div style={{ marginTop:8, fontSize:12, color:"#6b7280" }}>
@@ -2099,7 +2203,8 @@ function SavedListModal({
   overflowY: "auto",
   flex: "1 1 auto"
 }}>
-          {!list.length && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
+          {list.length === 0 && <div style={{ color:"#6b7280" }}>まだ保存はありません。</div>}
+
 
           {list.map(it=>(
             <div key={it.id} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
@@ -2409,6 +2514,50 @@ function PairEditModal({
     </div>
   );
 }
+/* --- 追加：保存ペアの表示用ミニ部品（共通 util の直前に置く） --- */
+function SequenceLine({ label, set, pattern, rev }: {
+  label: "左" | "右";
+  set: string;
+  pattern: number[];
+  rev?: boolean;
+}) {
+  const text = (rev ? [...pattern].slice().reverse() : pattern).join(" → ");
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+      <strong>{label}（{set}）{rev && <span className="rev-badge" style={{marginLeft:6}}>逆順</span>}：</strong>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function PairRow({ pair, onApply, onEdit, onDelete }: {
+  pair: SavedPair;
+  onApply: (p: SavedPair) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:10, background:"#fafafa" }}>
+      <SequenceLine label="左" set={pair.left.set}  pattern={pair.left.pattern}  rev={pair.left.rev} />
+      <div style={{ marginTop:4 }}>
+        <SequenceLine label="右" set={pair.right.set} pattern={pair.right.pattern} rev={pair.right.rev} />
+      </div>
+
+      {pair.memo && <div style={{ marginTop:6, whiteSpace:"pre-wrap" }}>{pair.memo}</div>}
+
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+        <button className="btn btn-blue" onClick={() => onApply(pair)}>適用</button>
+        <button className="btn btn-teal" onClick={() => onEdit(pair.id)}>編集</button>
+        <button className="btn btn-gray" onClick={() => onDelete(pair.id)}>削除</button>
+      </div>
+
+      <div style={{ marginTop:6, fontSize:12, color:"#64748b" }}>
+        {new Date(pair.ts).toLocaleString("ja-JP")}
+      </div>
+    </div>
+  );
+}
+/* --- 追加ここまで --- */
 
 /* ========= 共通 util ========= */
 function makeHLCx3(hits: Array<{col:number; row:number; matched:number[]; dir:"down"|"up"; matchedRows:number[]}>): Set<string> {
