@@ -1,5 +1,23 @@
-node_modules
-dist
-.vite
+﻿# Node / Vite
+node_modules/
+dist/
+.vite/
+.tmp/
+*.log
+
+# Env / 秘匿
 .env*
+*.key
+
+# OS / IDE
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ビルド生成物バックアップ
+*.zip
+*.7z
+
+# その他
+coverage/

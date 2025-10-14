@@ -1094,6 +1094,24 @@ const [showPairPreview, setShowPairPreview] = useState(false);
 // 右側で“任意に表示する列”（位置＝①〜⑫の番号。nullは未選択）
 const [rightPreviewPos, setRightPreviewPos] = useState<number | null>(null);
 
+// ▼ 置き換え：過剰監視をやめて、必要な時だけ同期
+useEffect(() => {
+  if (!showPairPreview) return;
+
+  // ★ ここに移動（useEffect の“中”）
+  const tick = () => { try { syncPairPreviewRowHeights(); } catch {} };
+
+  const raf = requestAnimationFrame(tick);
+  const t0  = setTimeout(tick, 0);
+  window.addEventListener('resize', tick);
+  return () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(t0);
+    window.removeEventListener('resize', tick);
+  };
+}, [showPairPreview, rightPreviewPos, pairPreviewL, pairFrom]);
+
+
 // ★ 追加：2本1セットの相方（1↔2, 3↔4, …, 11↔12）
 const pairMate = (col?: number | null) => {
   if (!col || !Number.isFinite(col)) return 1;
@@ -1102,12 +1120,10 @@ const pairMate = (col?: number | null) => {
 
 
 
-
-
-
-  // ★ ここに追加（return の直前）
+// ★ ここに追加（return の直前）
 const currentPatternFor = (side: "L" | "R"): number[] => {
   const digits = side === "L" ? candLDigits : candRDigits;
+
   const buf    = (side === "L" ? candLInput  : candRInput).trim();
 
   const out = [...digits];
@@ -1402,122 +1418,107 @@ function applySavedPair(p: SavedPair) {
         </>
       )}
 
-      {route === "leftResults" && (
+     {route === "leftResults" && (
   <section className="card">
-    {/* ▼ ヘッダー置き換えブロック（ここから） */}
+    {/* ▼ ヘッダー（3段） */}
     <div style={{ display:"grid", gap:8, marginBottom:8 }}>
-      {/* 1段目：戻る + 右寄せボタン。幅が足りない時はボタンだけ折り返し */}
-      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+      {/* 1段目：戻るだけ（左寄せ） */}
+      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
         <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-
-        <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
-  {/* ★ 左が1列に確定した時だけ出す（左→右モード） */}
-  {isCxMode(leftSet) && leftHitCol && (
-    <button
-      className="btn"
-      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-      onClick={() => {
-        setPairFrom("L");                           // 起点＝左
-        setRightPreviewPos(pairMate(leftHitCol));   // 右の初期列＝左の相方
-        setShowPairPreview(true);
-      }}
-    >
-      対の配列の表示
-    </button>
-  )}
-
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-</div>
-
       </div>
 
-      {/* 2段目：タイトルをボタン列の“下”に固定表示 */}
+      {/* 2段目：ボタン群（左寄せ） */}
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        {isCxMode(leftSet) && leftHitCol && (
+          <button
+            className="btn"
+            style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+            onClick={() => { setPairFrom("L"); setRightPreviewPos(pairMate(leftHitCol)); setShowPairPreview(true); }}
+          >
+            対の配列の表示
+          </button>
+        )}
+        <button className="btn btn-blue"   onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+        <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+      </div>
+
+      {/* 3段目：タイトル（左寄せ） */}
       <div>
         <strong>左シリンダー結果{dirL === "up" ? "（逆順）" : ""}</strong>
       </div>
     </div>
-    {/* ▲ ヘッダー置き換えブロック（ここまで） */}
 
     {/* …この下にパターンのピルや ResultList, GridCx3 が続く… */}
+    {!!lQuery.length && (
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
+        {lQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
+      </div>
+    )}
 
+    <ResultList
+      hits={(isCxMode(leftSet) ? lHitsCX3 : lHitsGL) as any}
+      getLines={isCxMode(leftSet)
+        ? (h)=>buildLinesForHit(h, posL, rarityStrictFor(leftSet), nameLooseFor(leftSet))
+        : undefined}
+      isReverse={dirL === "up"}
+    />
 
-          {!!lQuery.length && (
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 }}>
-              {lQuery.map((n,i)=>(<span key={i} className="pill pill-num">{n}</span>))}
-            </div>
-          )}
+    <div style={{ marginTop:12 }}>
+      {isCxMode(leftSet)
+        ? <GridCx3
+            positions={posL}
+            rowIndexCols={rowIdxL}
+            getRarityForKey={rarityStrictFor(leftSet)}
+            getNameForKey={nameLooseFor(leftSet)}
+            highlight={hlCx3L}
+            visibleCols={visColsCx3L}
+            highlightGood={hlSplitL.good}
+            highlightNone={hlSplitL.none}
+          />
+        : <Grid
+            byCyl={leftIdx.byCyl}
+            maxRow={Math.max(leftIdx.maxRow, 100)}
+            highlightCells={makeHLCells(lHitsGL,leftIdx.byCyl,"L")}
+            cylinder="L"
+            visibleCols={visColsGLL}
+          />
+      }
+    </div>
+  </section>
+)}
 
-          <ResultList
-  hits={(isCxMode(leftSet) ? lHitsCX3 : lHitsGL) as any}
-  getLines={isCxMode(leftSet)
-    ? (h)=>buildLinesForHit(h, posL, rarityStrictFor(leftSet), nameLooseFor(leftSet))
-    : undefined}
-  isReverse={dirL === "up"}   // ← これを追加
-/>
-
-
-          <div style={{ marginTop:12 }}>
-            {isCxMode(leftSet)
-              ?<GridCx3
-  positions={posL}
-  rowIndexCols={rowIdxL}
-  getRarityForKey={rarityStrictFor(leftSet)}
-  getNameForKey={nameLooseFor(leftSet)}
-  highlight={hlCx3L}
-  visibleCols={visColsCx3L}
-  /* ★ 追加（この先に高レアあり＝赤／なし＝別色） */
-  highlightGood={hlSplitL.good}
-  highlightNone={hlSplitL.none}
-/>
-
-              : <Grid
-                  byCyl={leftIdx.byCyl}
-                  maxRow={Math.max(leftIdx.maxRow, 100)}
-                  highlightCells={makeHLCells(lHitsGL,leftIdx.byCyl,"L")}
-                  cylinder="L"
-                  visibleCols={visColsGLL}
-                />
-            }
-          </div>
-        </section>
-      )}
-
-      {route === "rightResults" && (
+     {route === "rightResults" && (
   <section className="card">
-    {/* ▼ ヘッダー置き換えブロック（ここから） */}
+    {/* ▼ ヘッダー（3段） */}
     <div style={{ display:"grid", gap:8, marginBottom:8 }}>
-      {/* 1段目：戻る + 右寄せボタン（幅が足りない時はボタンだけ折り返し） */}
-      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+      {/* 1段目：戻る（左寄せ） */}
+      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
         <button className="btn btn-gray" onClick={()=>nav("home")}>← 戻る</button>
-
-        <div style={{ marginLeft:"auto", display:"flex", gap:8, flexWrap:"wrap" }}>
-  {/* ★ 右が“1列に確定”した時だけ出す（右→左モード） */}
-  {isCxMode(rightSet) && rightHitCol && (
-    <button
-      className="btn"
-      style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-      onClick={() => {
-        setPairFrom("R");                         // 起点＝右
-        setPairPreviewL(pairMate(rightHitCol));   // 左の初期表示＝右の相方列
-        setShowPairPreview(true);                 // プレビューモーダルを開く
-      }}
-    >
-      対の配列の表示
-    </button>
-  )}
-
-  <button className="btn btn-blue" onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
-  <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
-</div>
-
       </div>
 
-      {/* 2段目：タイトル */}
+      {/* 2段目：ボタン群（左寄せ）← marginLeft:"auto" を外す */}
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        {isCxMode(rightSet) && rightHitCol && (
+          <button
+            className="btn"
+            style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
+            onClick={() => { setPairFrom("R"); setPairPreviewL(pairMate(rightHitCol)); setShowPairPreview(true); }}
+          >
+            対の配列の表示
+          </button>
+        )}
+        <button className="btn btn-blue"   onClick={()=>setPairSaveModal({ open:true })}>履歴保存</button>
+        <button className="btn btn-violet" onClick={()=>setPairListOpen(true)}>履歴一覧</button>
+      </div>
+
+      {/* 3段目：タイトル（左寄せ） */}
       <div>
         <strong>右シリンダー結果{dirR === "up" ? "（逆順）" : ""}</strong>
       </div>
     </div>
+
+    {/* …この下は既存のピル/ResultList/GridCx3 … */}
+
     {/* ▲ ヘッダー置き換えブロック（ここまで） */}
 
     {/* …以下、右の内容… */}
@@ -1842,7 +1843,12 @@ function applySavedPair(p: SavedPair) {
     return /(404|Not\s*Found)|favicon\.ico/i.test(msg) ? null : `エラー: ${msg}`;
   })()}
 </div>
+      <footer className="site-copy" role="contentinfo">
+        2023–2025 Copyright All Rights Reserved.
+      </footer>
     </main>
+
+    
   );
 }
 
@@ -2009,7 +2015,8 @@ function Grid({ byCyl, maxRow, highlightCells, cylinder, visibleCols }:{
         </thead>
         <tbody>
           {Array.from({ length:maxRow }, (_,r)=>r+1).map(row=>(
-            <tr key={row}>
+            <tr key={row} data-row={row}>
+
               <td className="rowhead">{row}</td>
               {cols.map(c=>{
                 const cell = (show[c] || []).find((x:any)=>x.row===row);
@@ -2111,7 +2118,8 @@ function GridCx3({
         </thead>
         <tbody>
           {rows.map(r => (
-            <tr key={r.no}>
+            <tr key={r.no} data-row={r.no}>
+
               <td className="rowhead">{r.no}</td>
               {viewCols.map((colIdx, i) => {
                 const pos = i + 1;
@@ -2364,7 +2372,6 @@ function SaveMemoModal({
   );
 }
 
-/* ========= 左右ペア保存モーダル ========= */
 /* ========= 左右ペア保存モーダル ========= */
 function PairSaveModal({
   leftSet, rightSet,
@@ -2630,8 +2637,43 @@ function makeHLCells(hits: any[], byCyl:any, cyl:"L"|"R"): Set<string> {
   return out;
 }
 
+/* === ここから追加：プレビューモーダル左右の行高を同期 === */
+function syncPairPreviewRowHeights(){
+ const modal = document.querySelector('.modal');
+  if (!modal) return;
+
+  const tbodies = modal.querySelectorAll('table.grid tbody');
+  if (tbodies.length < 2) return;
+
+  const [tb1, tb2] = Array.from(tbodies) as HTMLTableSectionElement[];
+  const rows1 = Array.from(tb1.querySelectorAll('tr[data-row]')) as HTMLTableRowElement[];
+  const rows2 = Array.from(tb2.querySelectorAll('tr[data-row]')) as HTMLTableRowElement[];
+
+  const map2 = new Map<string, HTMLTableRowElement>();
+  rows2.forEach(r => map2.set(r.getAttribute('data-row') || '', r));
+
+  rows1.forEach(r1 => {
+    const key = r1.getAttribute('data-row') || '';
+    const r2 = map2.get(key);
+    if (!r2) return;
+
+    // いったんリセット
+    r1.style.height = '';
+    r2.style.height = '';
+
+    const h = Math.max(
+      r1.getBoundingClientRect().height,
+      r2.getBoundingClientRect().height
+    );
+    r1.style.height = h + 'px';
+    r2.style.height = h + 'px';
+  });
+}
+/* === 追加ここまで === */
+
 /* ===== スタイル注入（v4.9.1：帯フルブリード＋1段下げ＋行番号幅さらに固定） ===== */
 (function injectStyleV491(){
+
   const STYLE_ID = "legends-inline-style-v491";
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
@@ -2900,7 +2942,9 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
 } else { eatTopPadding(); }
 window.addEventListener('resize', eatTopPadding, { passive:true });
-new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
+// 監視はやめる（attributes を監視し続けると無限に発火してフリーズする）
+// new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
+
 })();
 
 // === 追加：セレクト見た目を「番号」と完全同一サイズに（崩れ補正） ===
@@ -2953,37 +2997,38 @@ new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:t
 })();
 
 
-/* === 幅ロック：後からCSSが当たっても常に上書き === */
-(function lockSelectWidthForever(){
+/* === 幅ロック：安全版（属性は監視しない） === */
+(function lockSelectWidthOnce(){
   const W = SEL_FIXED_PX;
   const apply = (root: ParentNode | Document = document) => {
     root.querySelectorAll<HTMLSelectElement>('.select-wrap select').forEach(s => {
-      s.style.setProperty('width',     W + 'px', 'important');
-      s.style.setProperty('max-width', W + 'px', 'important');
-      s.style.setProperty('min-width', '0',      'important');
-      s.style.setProperty('height', 'var(--ctrl-h)', 'important');
+      // 同じ値なら書き換えない（無駄な属性変更を防ぐ）
+      if (s.style.width !== `${W}px`)       s.style.setProperty('width',     W + 'px', 'important');
+      if (s.style.maxWidth !== `${W}px`)    s.style.setProperty('max-width', W + 'px', 'important');
+      if (s.style.minWidth !== '0px')       s.style.setProperty('min-width', '0',      'important');
+      if (s.style.height !== 'var(--ctrl-h)') s.style.setProperty('height', 'var(--ctrl-h)', 'important');
     });
     root.querySelectorAll<HTMLElement>('.select-wrap').forEach(w => {
-      w.style.setProperty('width',     W + 'px', 'important');
-      w.style.setProperty('max-width', W + 'px', 'important');
-      w.style.setProperty('min-width', W + 'px', 'important');
-      w.style.setProperty('height', 'var(--ctrl-h)', 'important');
+      if (w.style.width !== `${W}px`)       w.style.setProperty('width',     W + 'px', 'important');
+      if (w.style.maxWidth !== `${W}px`)    w.style.setProperty('max-width', W + 'px', 'important');
+      if (w.style.minWidth !== `${W}px`)    w.style.setProperty('min-width', W + 'px', 'important');
+      if (w.style.height !== 'var(--ctrl-h)') w.style.setProperty('height', 'var(--ctrl-h)', 'important');
     });
   };
+
+  const boot = () => apply();
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => apply(), { once:true });
-  } else { apply(); }
+    document.addEventListener('DOMContentLoaded', boot, { once:true });
+  } else {
+    boot();
+  }
+
+  // 追加されたノードにだけ適用（attributes は監視しない）
   new MutationObserver(muts => {
     for (const m of muts) {
-      if (m.type === 'childList') m.addedNodes.forEach(n => { if (n instanceof HTMLElement) apply(n); });
-      if (m.type === 'attributes') {
-        const t = m.target as Element;
-        if (t && (t.tagName === 'SELECT' || (t as HTMLElement).classList?.contains?.('select-wrap'))) {
-          apply(t.ownerDocument || document);
-        }
-      }
+      m.addedNodes.forEach(n => { if (n instanceof HTMLElement) apply(n); });
     }
-  }).observe(document.documentElement, { subtree:true, childList:true, attributes:true, attributeFilter:['style','class'] });
+  }).observe(document.body, { subtree:true, childList:true });
 })();
 
 /* === ビューポート固定（ピンチ/ダブルタップ拡大を抑止） === */
