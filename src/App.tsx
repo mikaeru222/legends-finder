@@ -1843,9 +1843,14 @@ function applySavedPair(p: SavedPair) {
     return /(404|Not\s*Found)|favicon\.ico/i.test(msg) ? null : `エラー: ${msg}`;
   })()}
 </div>
-      <footer className="site-copy" role="contentinfo">
-        2023–2025 Copyright All Rights Reserved.
-      </footer>
+      <footer
+  className="site-copy"
+  role="contentinfo"
+  style={{ textAlign: "center" }}   // ← 追加
+>
+  2023–2025 Copyright All Rights Reserved.
+</footer>
+
     </main>
 
     
