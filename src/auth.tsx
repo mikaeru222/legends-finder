@@ -149,3 +149,31 @@ export function SignOutButton() {
     </button>
   );
 }
+
+// ←← ここから下を今から足す！ 👇
+
+// いまのユーザーのセッションが Firestore に本当にあるか確認するフック
+export function useSessionGuard(user: User | null) {
+  const [checking, setChecking] = useState(false);
+  const [ok, setOk] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      // ログインしてなければOK扱い
+      setOk(true);
+      return;
+    }
+
+    const run = async () => {
+      setChecking(true);
+      const ref = doc(db, "sessions", user.uid);
+      const snap = await getDoc(ref);
+      setOk(snap.exists());
+      setChecking(false);
+    };
+
+    run();
+  }, [user]);
+
+  return { checking, ok };
+}

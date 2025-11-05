@@ -7,7 +7,8 @@ import { useSearchHistory, type HistoryItem } from "./hooks/useSearchHistory";
 import { loadCards as loadCx3Cards, loadPositions, type PositionRow, SPECIAL_P } from "./lib/cx3";
 import { colorForRarity, toHalf } from "./lib/rarity";
 import "./firebase";
-import { useAuthUser, SignInCard, SignOutButton } from "./auth";  // ← 追加
+import { useAuthUser, useSessionGuard, SignInCard, SignOutButton } from "./auth";
+
 
 /** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
 const SEL_FIXED_PX = 86;
@@ -273,25 +274,37 @@ function removePair(id: string) {
 
 
 
-/* ========= App ========= */
-// src/App.tsx
+// ========= App =========
 export default function App() {
   const { user, ready } = useAuthUser();
+  const { checking, ok } = useSessionGuard(user);
 
-  // 認証の準備中
-  if (!ready) {
+  // Firebaseの準備中 or セッション確認中 → 何も言わずヘッダーだけ出す
+  if (!ready || checking) {
     return (
       <main className="app">
         <header className="header">
-  <div className="header-inner">
-    <h1>ガンバレジェンズ配列表 検索ツール</h1>
-    <div className="header-actions">
-      <SignOutButton />
-    </div>
-  </div>
-</header>
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
+      </main>
+    );
+  }
 
-        <div style={{ padding: 16 }}>認証準備中…</div>
+  // ログインはしてるけど sessions にレコードがなかったケース
+  if (user && !ok) {
+    return (
+      <main className="app">
+        <header className="header">
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
+        <SignInCard />
+        <div style={{ maxWidth: 360, margin: "0 auto", padding: "0 16px", color: "#ef4444", fontSize: 12 }}>
+          ほかの端末でログイン中です。そちらをサインアウトしてからもう一度ログインしてください。
+        </div>
       </main>
     );
   }
@@ -301,14 +314,10 @@ export default function App() {
     return (
       <main className="app">
         <header className="header">
-  <div className="header-inner">
-    <h1>ガンバレジェンズ配列表 検索ツール</h1>
-    <div className="header-actions">
-      <SignOutButton />
-    </div>
-  </div>
-</header>
-
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
         <SignInCard />
       </main>
     );
@@ -317,6 +326,7 @@ export default function App() {
   // ログイン済 → 本体にバトンタッチ
   return <AppBody />;
 }
+
 function AppBody() {
 
 
