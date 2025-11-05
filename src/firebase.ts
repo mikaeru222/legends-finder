@@ -2,18 +2,15 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
-// ↓ここを .env からじゃなくて“生の値”にする
 const firebaseConfig = {
-  apiKey: "AIza..............",                     // Firebaseコンソールに出てるやつ
-  authDomain: "your-project-id.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project-id.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdefg1234567",
+  apiKey: "AIzaSyAd4nxf5zbhxnjLcWcFu06GDOYJaGSSyXE",
+  authDomain: "legends-finder-65557.firebaseapp.com",
+  projectId: "legends-finder-65557",
+  storageBucket: "legends-finder-65557.firebasestorage.app",
+  messagingSenderId: "567906474033",
+  appId: "1:567906474033:web:d73b78dade856c24d8dd10",
+  measurementId: "G-EGZZ1TY6TE" // ←あっても邪魔じゃないけど使わない
 };
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-
-// 動作確認用（あっていい）
-console.log("✅ Firebase initialized:", app.name);
