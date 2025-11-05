@@ -6,6 +6,8 @@ import { circledCol, matchAll } from "./lib/matcher";
 import { useSearchHistory, type HistoryItem } from "./hooks/useSearchHistory";
 import { loadCards as loadCx3Cards, loadPositions, type PositionRow, SPECIAL_P } from "./lib/cx3";
 import { colorForRarity, toHalf } from "./lib/rarity";
+import "./firebase";
+import { useAuthUser, SignInCard, SignOutButton } from "./auth";  // ← 追加
 
 /** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
 const SEL_FIXED_PX = 86;
@@ -272,8 +274,54 @@ function removePair(id: string) {
 
 
 /* ========= App ========= */
+// src/App.tsx
 export default function App() {
-  const { rows, sets, loading, error } = useCsvData(CSV_URL);
+  const { user, ready } = useAuthUser();
+
+  // 認証の準備中
+  if (!ready) {
+    return (
+      <main className="app">
+        <header className="header">
+  <div className="header-inner">
+    <h1>ガンバレジェンズ配列表 検索ツール</h1>
+    <div className="header-actions">
+      <SignOutButton />
+    </div>
+  </div>
+</header>
+
+        <div style={{ padding: 16 }}>認証準備中…</div>
+      </main>
+    );
+  }
+
+  // 未ログイン
+  if (!user) {
+    return (
+      <main className="app">
+        <header className="header">
+  <div className="header-inner">
+    <h1>ガンバレジェンズ配列表 検索ツール</h1>
+    <div className="header-actions">
+      <SignOutButton />
+    </div>
+  </div>
+</header>
+
+        <SignInCard />
+      </main>
+    );
+  }
+
+  // ログイン済 → 本体にバトンタッチ
+  return <AppBody />;
+}
+function AppBody() {
+
+
+  const { rows, sets, loading, error } = useCsvData(CSV_URL);  // ← 既存の処理はこの下から
+
   const rowsNorm = useMemo(() => rows.map(r => ({ ...r, set: String(r?.set ?? r?.series ?? r?.["シリーズ"] ?? r?.["弾"] ?? "").trim().toUpperCase() })), [rows]);
 
   const setOptions = useMemo(() => {
@@ -1179,8 +1227,15 @@ function applySavedPair(p: SavedPair) {
   return (
     <main className="app">
       <header className="header">
-        <h1>ガンバレジェンズ配列表 検索ツール</h1>
-      </header>
+  <div className="header-inner">
+    <h1>ガンバレジェンズ配列表 検索ツール</h1>
+    <div className="header-actions">
+      <SignOutButton />
+    </div>
+  </div>
+</header>
+
+
 
       {route === "home" && (
         <>
@@ -1431,7 +1486,7 @@ function applySavedPair(p: SavedPair) {
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
         {isCxMode(leftSet) && leftHitCol && (
           <button
-            className="btn"
+            className="btn btn-orange"
             style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
             onClick={() => { setPairFrom("L"); setRightPreviewPos(pairMate(leftHitCol)); setShowPairPreview(true); }}
           >
@@ -1500,7 +1555,7 @@ function applySavedPair(p: SavedPair) {
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
         {isCxMode(rightSet) && rightHitCol && (
           <button
-            className="btn"
+             className="btn btn-orange"
             style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
             onClick={() => { setPairFrom("R"); setPairPreviewL(pairMate(rightHitCol)); setShowPairPreview(true); }}
           >
@@ -2676,6 +2731,7 @@ function syncPairPreviewRowHeights(){
 }
 /* === 追加ここまで === */
 
+
 /* ===== スタイル注入（v4.9.1：帯フルブリード＋1段下げ＋行番号幅さらに固定） ===== */
 (function injectStyleV491(){
 
@@ -2723,10 +2779,50 @@ main.app .header > h1{
   color:#fff !important; background:transparent !important; border-radius:0 !important;
 }
 
-/* ← “左シリンダー結果” など、ヘッダー直後のカードだけ 1段下げ */
+/* ←ここに追加する */
+.header .header-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px 14px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+.header .header-inner h1 {
+  margin: 0;
+  font-size: 20px;
+  color: #fff;
+}
+.header .header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ここから元のつづき */
 main.app > .header + .card{ margin-top:12px !important; }
 @media (min-width:768px){
   main.app > .header + .card{ margin-top:16px !important; }
+}
+
+/* スマホ幅のときのヘッダー調整 */
+@media (max-width: 520px) {
+  .header .header-inner {
+    flex-direction: column;     /* タイトルの下にボタンが来る */
+    align-items: flex-start;    /* 左寄せにする（中央にしたければ center） */
+    gap: 6px;
+  }
+
+  .header .header-actions {
+    width: 100%;
+    justify-content: flex-end;  /* ボタンは右端に寄せる */
+  }
+
+  .header .header-inner h1 {
+    font-size: 18px;            /* 少し小さくして詰めやすく */
+  }
 }
 
 /* ==== 行間・フォーム ==== */
@@ -2751,12 +2847,11 @@ main.app > .header + .card{ margin-top:12px !important; }
   height:var(--ctrl-h) !important; font-size:16px !important;
   box-sizing:content-box !important; appearance:none !important; -webkit-appearance:none !important; -moz-appearance:none !important;
 
-  border:0 !important;                 /* ★ 内側ボーダーを消す */
-  outline:none !important;              /* ★ フォーカス枠を消す（必要なら） */
-  background:transparent !important;    /* ★ 背景はラッパー側に任せる */
-  box-shadow:none !important;           /* ★ UAの内側シャドウを無効化 */
+  border:0 !important;
+  outline:none !important;
+  background:transparent !important;
+  box-shadow:none !important;
 
-  /* 右側の▼分の余白（お好みで） */
   padding-right: 24px !important;
 }
 select::-ms-expand{ display:none; }
@@ -2792,58 +2887,38 @@ select::-ms-expand{ display:none; }
 }
 
 /* === CX セレクトの二重枠を解消 === */
-.select-wrap{
-  /* ラッパー側の枠は消す */
-  border: 0 !important;
-  background: transparent !important;
-}
-
+.select-wrap{ border: 0 !important; background: transparent !important; }
 .select-wrap > select{
-  /* 枠は select 本体だけに出す */
   border: 1px solid #d1d5db !important;
   border-radius: var(--radius-ctrl) !important;
   background: #fff !important;
   box-shadow: none !important;
   outline: none !important;
-  padding-right: 24px !important; /* ▼分の余白 */
+  padding-right: 24px !important;
 }
-
 .select-wrap > select:focus,
-.select-wrap > select:focus-visible{
-  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
-  outline: none !important;
-}
-
+.select-wrap > select:focus-visible{ box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important; outline: none !important; }
 .select-wrap select:focus,
-.select-wrap select:focus-visible{
-  /* フォーカス時は薄い内側ハイライトだけ（任意） */
-  box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important;
-  outline: none !important;
-}
+.select-wrap select:focus-visible{ box-shadow: inset 0 0 0 2px rgba(22,119,255,.25) !important; outline: none !important; }
+
 /* --- Homeのセクション見出しを黒の通常文字に --- */
 main.app .card .section-title{
   color:#111 !important;
-  font-weight:700 !important;     /* 太字を外す */
+  font-weight:700 !important;
   background:transparent !important;
   text-shadow:none !important;
 }
 
-
 /* ==== 結果表示 ==== */
-/* 逆順バッジ：エメラルド */
 .rev-badge{
   display:inline-flex; align-items:center; justify-content:center;
   margin-left:6px; padding:2px 6px;
   border-radius:6px;
-  background:#10B981;      /* エメラルド */
+  background:#10B981;
   color:#fff;
-  border:1px solid #059669; /* 濃いめ縁取りで締める */
+  border:1px solid #059669;
   font-weight:700; font-size:12px; line-height:1;
 }
-
-
-
-
 
 .res-list{ display:grid; gap:10px; margin-top:8px; }
 .res-summary{ margin:0; font-size:14px; }
@@ -2870,7 +2945,7 @@ main.app .card .section-title{
   min-width:28px; height:28px; padding:0 .8em; border-radius:999px; background:#2EC5FF; color:#fff;
   border:1px solid #9BDCF9; font-size:14px; font-weight:700; line-height:1; }
 .pill.pill-num{
-  width:34px !important; height:34px !important; padding:0 !important; border-radius:50% !important;
+  width:34px !important; height:34px !important; padding:0 !important; border-radius:50% !重要;
   box-sizing:border-box !important; display:grid !important; place-items:center !important;
   line-height:1 !important; font-size:22px; font-weight:700;
   font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
@@ -2885,7 +2960,7 @@ main.app .card .section-title{
   padding-left:4px !important; padding-right:4px !important;
   white-space:nowrap; text-overflow:clip;
   font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1, "lnum" 1;
-  -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important;
+  -webkit-text-size-adjust:100% !important; text-size-adjust:100% !重要;
 }
 @media (max-width:480px){
   .grid-wrap .grid th:first-child,
@@ -2893,6 +2968,34 @@ main.app .card .section-title{
   .grid-wrap .grid td:first-child{
     width:24px !important; max-width:30px !important;
   }
+}
+/* 対の配列の表示ボタンも同じ高さ・丸み・文字サイズでそろえる */
+.card .btn.btn-orange {
+  height: var(--ctrl-h) !important;
+  line-height: var(--ctrl-h) !important;
+  padding: 0 var(--btn-padx) !important;
+  border-radius: var(--radius-ctrl) !important;
+  min-width: var(--btn-minw) !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+}
+
+/* 履歴ボタンを同じ幅にする */
+.card .btn.btn-blue,
+.card .btn.btn-violet {
+  min-width: 110px;
+  text-align: center;
+}
+/* 履歴保存（青）と履歴一覧（紫）を同じ見た目にする */
+.card .btn.btn-blue {
+  height: var(--ctrl-h) !important;
+  line-height: var(--ctrl-h) !important;
+  padding: 0 var(--btn-padx) !important;
+  border-radius: var(--radius-ctrl) !important;
+  min-width: var(--btn-minw) !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  text-align: center;
 }
 
 /* モーダル（置き換え） */
@@ -2904,13 +3007,12 @@ main.app .card .section-title{
   position:absolute; left:50%; top:50%;
   transform:translate(-50%,-50%);
   width:min(620px,94vw);
-  max-height:min(92vh, 720px);      /* ← 画面からはみ出さない上限 */
-  display:flex; flex-direction:column;  /* ← ヘッダー/本文/アクションを縦配置 */
+  max-height:min(92vh, 720px);
+  display:flex; flex-direction:column;
   background:#fff; border-radius:var(--radius-modal);
   box-shadow:0 10px 30px rgba(0,0,0,.25);
   overscroll-behavior:contain;
 }
-
 .modal-head{ display:flex; align-items:center; padding:12px 14px; border-bottom:1px solid #e5e7eb; }
 .modal-title{ font-size:18px; font-weight:700; }
 .modal-x{ margin-left:auto; background: transparent; border:0; font-size:22px; line-height:1; cursor:pointer; }
@@ -2918,37 +3020,39 @@ main.app .card .section-title{
 /* ★ ここを変更：本文だけスクロール可能に */
 .modal-content{
   padding:12px 14px;
-  overflow:auto;          /* ← コンテンツだけがスクロール */
-  flex:1 1 auto;          /* ← 余白をここに配分して伸縮 */
-  min-height:0;           /* ← flex 子要素が正しく縮むように */
+  overflow:auto;
+  flex:1 1 auto;
+  min-height:0;
 }
-
 .modal-actions{
   display:flex; gap:8px; align-items:center; justify-content:flex-end;
   padding:12px 14px; border-top:1px solid #e5e7eb;
-  background:#fff;        /* スクロール時に下が透けないように */
+  background:#fff;
 }
-
 `;
-/* 上方向の余白を食い込む（親の padding-top を無効化） */
-const eatTopPadding = () => {
-  const app = document.querySelector('main.app') as HTMLElement | null;
-  const hdr = app?.querySelector('.header') as HTMLElement | null;
-  if (!app || !hdr) return;
-  let p: HTMLElement | null = hdr.parentElement as HTMLElement | null;
-  let pt = 0;
-  while(p && p !== document.body){
-    const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop)||0;
-    if (v){ pt = v; break; } p = p.parentElement;
-  }
-  hdr.style.marginTop = (-pt) + 'px';
-};
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
-} else { eatTopPadding(); }
-window.addEventListener('resize', eatTopPadding, { passive:true });
-// 監視はやめる（attributes を監視し続けると無限に発火してフリーズする）
-// new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
+
+  /* 上方向の余白を食い込む（親の padding-top を無効化） */
+  const eatTopPadding = () => {
+    const app = document.querySelector('main.app') as HTMLElement | null;
+    const hdr = app?.querySelector('.header') as HTMLElement | null;
+    if (!app || !hdr) return;
+
+    let p: HTMLElement | null = hdr.parentElement as HTMLElement | null;
+    let pt = 0;
+    while (p && p !== document.body) {
+      const cs = getComputedStyle(p); const v = parseFloat(cs.paddingTop) || 0;
+      if (v){ pt = v; break; } p = p.parentElement as HTMLElement | null;
+    }
+    hdr.style.marginTop = (-pt) + 'px';
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', eatTopPadding, { once:true });
+  } else { eatTopPadding(); }
+  window.addEventListener('resize', eatTopPadding, { passive:true });
+
+  // 監視はやめる（attributes を監視し続けると無限に発火してフリーズする）
+  // new MutationObserver(eatTopPadding).observe(document.documentElement, {subtree:true, attributes:true, childList:true});
 
 })();
 
