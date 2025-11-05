@@ -7,8 +7,8 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth";
-import { firebaseErrorToJa } from "./firebaseErrorMessages"; // ← これを足した
 
+// 今ログインしてるかどうかのフック（そのまま）
 export function useAuthUser() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -24,25 +24,32 @@ export function useAuthUser() {
   return { user, ready };
 }
 
+// ログインカード
 export function SignInCard() {
-  const [email, setEmail] = useState("");
+  const [idOrEmail, setIdOrEmail] = useState("");
   const [pass, setPass] = useState("");
   const [err, setErr] = useState<string>("");
+
+  // ここだけあなた用にしてる
+  const normalizeToEmail = (input: string): string => {
+    const trimmed = input.trim();
+    if (!trimmed) return trimmed;
+
+    // すでにメール形式ならそのまま
+    if (trimmed.includes("@")) return trimmed;
+
+    // メールじゃなかったら自動で @gmail.com をつける
+    return trimmed + "@gmail.com";
+  };
 
   const doSignIn = async () => {
     setErr("");
     try {
+      const email = normalizeToEmail(idOrEmail);
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (e: any) {
-      // e.code が来てたら日本語にする
-      const code = e?.code as string | undefined;
-      if (code) {
-        setErr(firebaseErrorToJa(code));
-      } else {
-        // もし想定外のエラーだったら元の文にする
-        setErr(e?.message || "ログインに失敗しました");
-      }
-      console.error("signIn error:", e);
+      // とりあえず今は英語をそのまま表示
+      setErr(e?.message || "ログインに失敗しました");
     }
   };
 
@@ -59,9 +66,9 @@ export function SignInCard() {
       <h2 style={{ marginTop: 0 }}>ログイン</h2>
       <div style={{ display: "grid", gap: 8 }}>
         <input
-          placeholder="メールアドレス"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          placeholder="ログインID"
+          value={idOrEmail}
+          onChange={(e) => setIdOrEmail(e.target.value)}
           style={{
             height: 36,
             padding: "0 8px",
@@ -90,6 +97,7 @@ export function SignInCard() {
   );
 }
 
+// サインアウトボタン
 export function SignOutButton() {
   return (
     <button className="btn btn-gray" onClick={() => signOut(auth)}>
