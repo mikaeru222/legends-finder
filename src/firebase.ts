@@ -2,17 +2,18 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
+// ↓ここを .env からじゃなくて“生の値”にする
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIza..............",                     // Firebaseコンソールに出てるやつ
+  authDomain: "your-project-id.firebaseapp.com",
+  projectId: "your-project-id",
+  storageBucket: "your-project-id.appspot.com",
+  messagingSenderId: "1234567890",
+  appId: "1:1234567890:web:abcdefg1234567",
 };
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// 動作確認用（あとで消してOK）
+// 動作確認用（あっていい）
 console.log("✅ Firebase initialized:", app.name);
