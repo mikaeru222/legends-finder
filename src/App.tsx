@@ -278,8 +278,9 @@ function removePair(id: string) {
 export default function App() {
   const { user, ready } = useAuthUser();
   const { checking, ok } = useSessionGuard(user);
+  const [loginMsg, setLoginMsg] = useState("");   // ← ここ追加
 
-  // Firebaseの準備中 or セッション確認中 → 何も言わずヘッダーだけ出す
+  // 準備中
   if (!ready || checking) {
     return (
       <main className="app">
@@ -292,7 +293,7 @@ export default function App() {
     );
   }
 
-  // ログインはしてるけど sessions にレコードがなかったケース
+  // ログインしてるけど sessions に無い（別端末に取られた）
   if (user && !ok) {
     return (
       <main className="app">
@@ -301,10 +302,20 @@ export default function App() {
             <h1>ガンバレジェンズ配列表 検索ツール</h1>
           </div>
         </header>
-        <SignInCard />
-        <div style={{ maxWidth: 360, margin: "0 auto", padding: "0 16px", color: "#ef4444", fontSize: 12 }}>
-          ほかの端末でログイン中です。そちらをサインアウトしてからもう一度ログインしてください。
-        </div>
+        <SignInCard onBlocked={setLoginMsg} />  {/* ← ここで受け取る */}
+        {loginMsg && (
+          <div
+            style={{
+              maxWidth: 360,
+              margin: "0 auto",
+              padding: "0 16px",
+              color: "#ef4444",
+              fontSize: 12,
+            }}
+          >
+            {loginMsg}
+          </div>
+        )}
       </main>
     );
   }
@@ -318,14 +329,28 @@ export default function App() {
             <h1>ガンバレジェンズ配列表 検索ツール</h1>
           </div>
         </header>
-        <SignInCard />
+        <SignInCard onBlocked={setLoginMsg} />
+        {loginMsg && (
+          <div
+            style={{
+              maxWidth: 360,
+              margin: "0 auto",
+              padding: "0 16px",
+              color: "#ef4444",
+              fontSize: 12,
+            }}
+          >
+            {loginMsg}
+          </div>
+        )}
       </main>
     );
   }
 
-  // ログイン済 → 本体にバトンタッチ
+  // ログイン済
   return <AppBody />;
 }
+
 
 function AppBody() {
 

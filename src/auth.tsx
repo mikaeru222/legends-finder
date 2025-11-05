@@ -39,8 +39,13 @@ function normalizeToEmail(input: string): string {
   return trimmed + "@gmail.com";
 }
 
+// 親からメッセージを受け渡せるようにする
+type SignInCardProps = {
+  onBlocked?: (msg: string) => void;  // ← 今回追加
+};
+
 // ログインカード
-export function SignInCard() {
+export function SignInCard({ onBlocked }: SignInCardProps) {
   const [idOrEmail, setIdOrEmail] = useState("");
   const [pass, setPass] = useState("");
   const [err, setErr] = useState<string>("");
@@ -60,9 +65,10 @@ export function SignInCard() {
 
       if (snap.exists()) {
         // すでに誰か(自分の別端末)がログイン中
-        // ここでログアウトしておかないと「auth だけ OK」になっちゃうので消す
         await signOut(auth);
-        setErr("ほかの端末でログイン中です。先にそちらをログアウトしてください。");
+        const msg = "ほかの端末でログイン中です。先にそちらをログアウトしてください。";
+        setErr(msg);
+        onBlocked?.(msg);   // ← 親にも教える
         return;
       }
 
@@ -74,13 +80,13 @@ export function SignInCard() {
       // これでログイン完了
 
     } catch (e: any) {
-      // Firebase の英語をそのままでもいいけど、一応日本語っぽく
       const msg =
         e?.message?.includes("auth/invalid-credential") ||
         e?.message?.includes("auth/invalid-email")
           ? "IDまたはパスワードが違います"
           : e?.message || "ログインに失敗しました";
       setErr(msg);
+      // これは普通のエラーなので親には渡さなくてもOK
     }
   };
 
@@ -132,14 +138,10 @@ export function SignInCard() {
 export function SignOutButton() {
   const doSignOut = async () => {
     const u = auth.currentUser;
-    // 先に Firestore のセッションを消す
     if (u) {
       const sessionRef = doc(db, "sessions", u.uid);
-      await deleteDoc(sessionRef).catch(() => {
-        // 無くても無視
-      });
+      await deleteDoc(sessionRef).catch(() => {});
     }
-    // そのあと Auth もサインアウト
     await signOut(auth);
   };
 
@@ -150,8 +152,6 @@ export function SignOutButton() {
   );
 }
 
-// ←← ここから下を今から足す！ 👇
-
 // いまのユーザーのセッションが Firestore に本当にあるか確認するフック
 export function useSessionGuard(user: User | null) {
   const [checking, setChecking] = useState(false);
@@ -159,7 +159,6 @@ export function useSessionGuard(user: User | null) {
 
   useEffect(() => {
     if (!user) {
-      // ログインしてなければOK扱い
       setOk(true);
       return;
     }
