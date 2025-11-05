@@ -1,12 +1,19 @@
 // src/auth.tsx
 import { useEffect, useState } from "react";
-import { auth } from "./firebase";
+import { auth, db } from "./firebase";
 import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
 } from "firebase/auth";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
 // 今ログインしてるかどうかのフック（そのまま）
 export function useAuthUser() {
@@ -24,32 +31,56 @@ export function useAuthUser() {
   return { user, ready };
 }
 
+// 入力が「mikaeru222」みたいなときに gmail を足すやつ
+function normalizeToEmail(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.includes("@")) return trimmed;
+  return trimmed + "@gmail.com";
+}
+
 // ログインカード
 export function SignInCard() {
   const [idOrEmail, setIdOrEmail] = useState("");
   const [pass, setPass] = useState("");
   const [err, setErr] = useState<string>("");
 
-  // ここだけあなた用にしてる
-  const normalizeToEmail = (input: string): string => {
-    const trimmed = input.trim();
-    if (!trimmed) return trimmed;
-
-    // すでにメール形式ならそのまま
-    if (trimmed.includes("@")) return trimmed;
-
-    // メールじゃなかったら自動で @gmail.com をつける
-    return trimmed + "@gmail.com";
-  };
-
   const doSignIn = async () => {
     setErr("");
+
     try {
+      // 1) Auth でログイン
       const email = normalizeToEmail(idOrEmail);
-      await signInWithEmailAndPassword(auth, email, pass);
+      const cred = await signInWithEmailAndPassword(auth, email, pass);
+      const uid = cred.user.uid;
+
+      // 2) Firestore でセッションを確認
+      const sessionRef = doc(db, "sessions", uid);
+      const snap = await getDoc(sessionRef);
+
+      if (snap.exists()) {
+        // すでに誰か(自分の別端末)がログイン中
+        // ここでログアウトしておかないと「auth だけ OK」になっちゃうので消す
+        await signOut(auth);
+        setErr("ほかの端末でログイン中です。先にそちらをログアウトしてください。");
+        return;
+      }
+
+      // 3) セッションを作成
+      await setDoc(sessionRef, {
+        uid,
+        createdAt: serverTimestamp(),
+      });
+      // これでログイン完了
+
     } catch (e: any) {
-      // とりあえず今は英語をそのまま表示
-      setErr(e?.message || "ログインに失敗しました");
+      // Firebase の英語をそのままでもいいけど、一応日本語っぽく
+      const msg =
+        e?.message?.includes("auth/invalid-credential") ||
+        e?.message?.includes("auth/invalid-email")
+          ? "IDまたはパスワードが違います"
+          : e?.message || "ログインに失敗しました";
+      setErr(msg);
     }
   };
 
@@ -99,8 +130,21 @@ export function SignInCard() {
 
 // サインアウトボタン
 export function SignOutButton() {
+  const doSignOut = async () => {
+    const u = auth.currentUser;
+    // 先に Firestore のセッションを消す
+    if (u) {
+      const sessionRef = doc(db, "sessions", u.uid);
+      await deleteDoc(sessionRef).catch(() => {
+        // 無くても無視
+      });
+    }
+    // そのあと Auth もサインアウト
+    await signOut(auth);
+  };
+
   return (
-    <button className="btn btn-gray" onClick={() => signOut(auth)}>
+    <button className="btn btn-gray" onClick={doSignOut}>
       サインアウト
     </button>
   );
