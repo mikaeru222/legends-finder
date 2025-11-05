@@ -67,7 +67,7 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
         // すでに誰か(自分の別端末)がログイン中
         await signOut(auth);
         const msg =
-          "ほかの端末でログイン中です。先にそちらをログアウトしてください。";
+          "他の端末でログイン中です。先にそちらをログアウトしてください。";
         setErr(msg);
         onBlocked?.(msg); // 親(App.tsx)にも伝える
         return;
