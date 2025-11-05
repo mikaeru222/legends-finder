@@ -41,7 +41,7 @@ function normalizeToEmail(input: string): string {
 
 // 親からメッセージを受け渡せるようにする
 type SignInCardProps = {
-  onBlocked?: (msg: string) => void;  // ← 今回追加
+  onBlocked?: (msg: string) => void;
 };
 
 // ログインカード
@@ -66,9 +66,10 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
       if (snap.exists()) {
         // すでに誰か(自分の別端末)がログイン中
         await signOut(auth);
-        const msg = "ほかの端末でログイン中です。先にそちらをログアウトしてください。";
+        const msg =
+          "ほかの端末でログイン中です。先にそちらをログアウトしてください。";
         setErr(msg);
-        onBlocked?.(msg);   // ← 親にも教える
+        onBlocked?.(msg); // 親(App.tsx)にも伝える
         return;
       }
 
@@ -86,7 +87,6 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
           ? "IDまたはパスワードが違います"
           : e?.message || "ログインに失敗しました";
       setErr(msg);
-      // これは普通のエラーなので親には渡さなくてもOK
     }
   };
 
@@ -138,10 +138,14 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
 export function SignOutButton() {
   const doSignOut = async () => {
     const u = auth.currentUser;
+    // 先に Firestore のセッションを消す
     if (u) {
       const sessionRef = doc(db, "sessions", u.uid);
-      await deleteDoc(sessionRef).catch(() => {});
+      await deleteDoc(sessionRef).catch(() => {
+        // ないときは無視
+      });
     }
+    // そのあと Auth もサインアウト
     await signOut(auth);
   };
 
@@ -158,20 +162,49 @@ export function useSessionGuard(user: User | null) {
   const [ok, setOk] = useState(true);
 
   useEffect(() => {
+    // ログアウト状態ならそもそもOK
     if (!user) {
       setOk(true);
       return;
     }
 
-    const run = async () => {
-      setChecking(true);
+    let cancelled = false;
+
+    const checkOnce = async () => {
       const ref = doc(db, "sessions", user.uid);
       const snap = await getDoc(ref);
-      setOk(snap.exists());
-      setChecking(false);
+      return snap.exists();
+    };
+
+    const run = async () => {
+      setChecking(true);
+
+      // ①まず一回見る
+      const first = await checkOnce();
+
+      if (first) {
+        if (!cancelled) {
+          setOk(true);
+          setChecking(false);
+        }
+        return;
+      }
+
+      // ②なかったらちょっと待ってもう一回見る（書き込みの遅延対策）
+      await new Promise((r) => setTimeout(r, 700));
+      const second = await checkOnce();
+
+      if (!cancelled) {
+        setOk(second);
+        setChecking(false);
+      }
     };
 
     run();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   return { checking, ok };
