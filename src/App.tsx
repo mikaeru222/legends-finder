@@ -165,8 +165,51 @@ const routeFromHash = (): Route => {
 };
 const nav = (r: Route) => { location.hash = "/" + r; };
 
-// CX3/CX4 を“完全配列表モード”として扱う
-const isCxMode = (setKey: string) => /CX[34]|XC[34]|CX-[34]/i.test(setKey);
+// ===== CX セット識別ユーティリティ（前処理） =====
+// 例: " cx-5 ", "ＸＣ５", "xc5", "CX５" などの表記ブレを正規化して "CX5" へ
+const normalizeSetKey = (input: string): string => {
+  if (!input) return "";
+  // 全角→半角の一部・記号・空白をざっくり吸収
+  const z2h = (s: string) =>
+    s
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) =>
+        String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+      )
+      .replace(/[－ー―—–]/g, "-")
+      .replace(/\s+/g, "");
+
+  let s = z2h(input).toUpperCase();
+
+  // XC → CX（タイプミス／並び違いを吸収）
+  s = s.replace(/^XC/, "CX");
+
+  // "CX-5" → "CX5"
+  s = s.replace(/^CX-?([345])$/, "CX$1");
+
+  return s;
+};
+
+// 与えられた文字列からセットキーを検出して正規化して返す
+// 例: "これはcx-5です" → "CX5" / マッチしなければ元の normalize 結果を返す
+const detectSetKey = (raw: string): string => {
+  const s = normalizeSetKey(raw);
+  const m = s.match(/CX[345]/);
+  return m ? m[0] : s;
+};
+
+
+// CX3/CX4/CX5 を“完全配列表モード”として扱う
+const isCxMode = (setKey: string) => {
+  const key = detectSetKey(setKey);
+  return /^(CX[345])$/.test(key);
+};
+
+
+// 表記ブレは detectSetKey で正規化し、完全一致だけ許可
+const isCx3 = (key: string) => detectSetKey(key) === "CX3";
+const isCx4 = (key: string) => detectSetKey(key) === "CX4";
+const isCx5 = (key: string) => detectSetKey(key) === "CX5";
+
 
 /* ========= 永続保存（複数件対応 / localStorage） ========= */
 export type SavedEntry = { id: string; pattern: number[]; memo: string; ts: number; rev?: boolean };
@@ -354,6 +397,7 @@ export default function App() {
 
 function AppBody() {
 
+  
 
   const { rows, sets, loading, error } = useCsvData(CSV_URL);  // ← 既存の処理はこの下から
 
@@ -364,7 +408,9 @@ function AppBody() {
     rowsNorm.forEach(r => { const key = String(r.set || "").trim(); if (key) seen.add(key); });
     const arr = [...seen];
     if (!arr.includes("CX3")) arr.push("CX3");
-    if (!arr.includes("CX4")) arr.push("CX4"); // 追加
+if (!arr.includes("CX4")) arr.push("CX4");
+if (!arr.includes("CX5")) arr.push("CX5"); // ← これを追加
+
     return arr.sort((a,b)=>{
   const na = parseInt(a.replace(/\D+/g,""),10);
   const nb = parseInt(b.replace(/\D+/g,""),10);
@@ -374,10 +420,14 @@ function AppBody() {
 
   }, [rowsNorm]);
 
-  const [leftSet, setLeftSet] = useState("CX4");
-const [rightSet, setRightSet] = useState("CX4");
+  const [leftSet, setLeftSet] = useState("CX5");
+const [rightSet, setRightSet] = useState("CX5");
 
-  useEffect(()=>{ if (!leftSet) setLeftSet("CX4"); if (!rightSet) setRightSet("CX4"); },[]);
+  useEffect(() => {
+  if (!leftSet) setLeftSet("CX5");
+  if (!rightSet) setRightSet("CX5");
+}, []);
+
 
 
   const [lQuery, setLQuery] = useState<number[]>([]);
@@ -486,6 +536,9 @@ const isMobile = typeof window !== "undefined"
   const [cx4KeyRarity, setCx4KeyRarity] = useState<Map<string,string>>(new Map());
   const [cx4KeyName,   setCx4KeyName]   = useState<Map<string,string>>(new Map());
 
+  const [cx5KeyRarity, setCx5KeyRarity] = useState<Map<string, string>>(new Map());
+const [cx5KeyName,   setCx5KeyName]   = useState<Map<string, string>>(new Map());
+
   const deriveKeys = (codeRaw: string): string[] => {
     const u = toHalf(String(codeRaw||"")).toUpperCase().trim();
     const keys = new Set<string>();
@@ -512,6 +565,8 @@ const isMobile = typeof window !== "undefined"
       const mpCX3N    = new Map<string,string>();
       const mpCX4R    = new Map<string,string>();
       const mpCX4N    = new Map<string,string>();
+      const mpCX5R    = new Map<string, string>();
+      const mpCX5N    = new Map<string, string>();
 
       // 共通（cards.csv）
       try{
@@ -550,16 +605,35 @@ const isMobile = typeof window !== "undefined"
           }
         }catch{}
       }
+// === CX5 の辞書を読み込む（cards.cx5.csv 他の別名も許容） ===
+for (const src of ["cards.cx5.csv", "cx5_cards.csv", "cs5_cards.csv"]) {
+  try {
+    const rows5 = await loadCx3Cards(abs(src));
+    for (const c of rows5 as any[]) {
+      const code = String(c.code ?? "");
+      const name = String(c.name ?? "");
+      const rar  = String(c.rarity ?? "");
+      // 既存の deriveKeys を使ってコード表記ゆれを吸収
+      for (const k of deriveKeys(code)) {
+        if (name && !mpCX5N.has(k)) mpCX5N.set(k, name);
+        if (rar  && !mpCX5R.has(k)) mpCX5R.set(k, rar);
+      }
+    }
+    break; // どれか1つ読めたらOK
+  } catch {}
+}
 
-      // （既存）
-setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
+ setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
 setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
 setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
+setCx5KeyRarity(mpCX5R);       setCx5KeyName(mpCX5N); // ← 追加！
 
-// ★ ここから3行を追加（REGISTRY へ登録）
 setRegistry("COMMON", { rarity: mpCommonR, name: mpCommonN, specialP: SPECIAL_P });
 setRegistry("CX3",    { rarity: mpCX3R,    name: mpCX3N,    specialP: SPECIAL_P });
 setRegistry("CX4",    { rarity: mpCX4R,    name: mpCX4N,    specialP: SPECIAL_P });
+setRegistry("CX5",    { rarity: mpCX5R,    name: mpCX5N,    specialP: SPECIAL_P });
+
+
 // ★ ここまで
 
     }catch(e){ console.warn("cards csv 読込失敗:", e); }
@@ -661,11 +735,39 @@ const nameLooseFor = (setKey: string) => (rawToken: string) => {
     }catch(e){ console.warn("cx4_positions.csv 読込失敗:", e); }
   })() }, []);
 
-  // 選択セットに応じた参照
-  const posL = useMemo(()=> /CX4|XC4|CX-4/i.test(leftSet) ? cx4Pos : cx3Pos,  [leftSet, cx3Pos, cx4Pos]);
-  const posR = useMemo(()=> /CX4|XC4|CX-4/i.test(rightSet)? cx4Pos : cx3Pos,  [rightSet,cx3Pos, cx4Pos]);
-  const rowIdxL = useMemo(()=> /CX4|XC4|CX-4/i.test(leftSet) ? rowIndexColsCX4 : rowIndexCols,  [leftSet,rowIndexCols,rowIndexColsCX4]);
-  const rowIdxR = useMemo(()=> /CX4|XC4|CX-4/i.test(rightSet)? rowIndexColsCX4 : rowIndexCols,  [rightSet,rowIndexCols,rowIndexColsCX4]);
+// CX5
+const [cx5Pos, setCx5Pos] = useState<PositionRow[]>([]);
+const [rowIndexColsCX5, setRowIndexColsCX5] = useState<Set<number>>(new Set());
+
+useEffect(() => { (async ()=>{
+  try{
+    const raw: any[] = await loadPositions(abs("cx5_positions.csv"));
+    setCx5Pos(raw);
+    setRowIndexColsCX5(detectRowIndexCols(raw));
+  }catch(e){ console.warn("cx5_positions.csv 読込失敗:", e); }
+})() }, []);
+
+
+  // 選択セットに応じた参照（CX3/CX4/CX5対応）
+const posL = useMemo(
+  () => (isCx5(leftSet) ? cx5Pos : isCx4(leftSet) ? cx4Pos : cx3Pos),
+  [leftSet, cx3Pos, cx4Pos, cx5Pos]
+);
+const posR = useMemo(
+  () => (isCx5(rightSet) ? cx5Pos : isCx4(rightSet) ? cx4Pos : cx3Pos),
+  [rightSet, cx3Pos, cx4Pos, cx5Pos]
+);
+
+// 行番号列セットも切替
+const rowIdxL = useMemo(
+  () => (isCx5(leftSet) ? rowIndexColsCX5 : isCx4(leftSet) ? rowIndexColsCX4 : rowIndexCols),
+  [leftSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5]
+);
+const rowIdxR = useMemo(
+  () => (isCx5(rightSet) ? rowIndexColsCX5 : isCx4(rightSet) ? rowIndexColsCX4 : rowIndexCols),
+  [rightSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5]
+);
+
 
 // --- 対の配列モーダル用：選択肢（①〜）を作る ---
 // 左グリッドで選べる番号（行番号列は除外してカウント）
@@ -871,6 +973,8 @@ const visColsCx3R = useMemo(()=> visiblePosFromCx3Hits(rHitsCX3, rowIdxR), [rHit
 const visColsGLL  = useMemo(()=> visibleColsFromGLHits(lHitsGL), [lHitsGL]);
 const visColsGLR  = useMemo(()=> visibleColsFromGLHits(rHitsGL), [rHitsGL]);
 
+
+
 // ★ 左が1列に確定
 const leftHitCol = useMemo(
   () => (isCxMode(leftSet) && visColsCx3L.length === 1 ? visColsCx3L[0] : null),
@@ -1019,9 +1123,19 @@ const buildSuggestions = (
 ): Sug[] => {
   if (!isCxMode(setKey) || !pat.length) return [];
 
-  const usePos = /CX4|XC4|CX-4/i.test(setKey) ? cx4Pos : cx3Pos;
-  const useIdx = /CX4|XC4|CX-4/i.test(setKey) ? rowIndexColsCX4 : rowIndexCols;
+  // ★ セットごとにポジション表を切り替える（CX3 / CX4 / CX5）
+  const usePos =
+    isCx5(setKey) ? cx5Pos :
+    isCx4(setKey) ? cx4Pos :
+                    cx3Pos;
+
+  const useIdx =
+    isCx5(setKey) ? rowIndexColsCX5 :
+    isCx4(setKey) ? rowIndexColsCX4 :
+                    rowIndexCols;
+
   if (!usePos.length) return [];
+
 
   const hits = buildCx3Hits(usePos, pat, useIdx, direction);
 
