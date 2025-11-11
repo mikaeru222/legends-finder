@@ -13,7 +13,7 @@ import {
   setDoc,
   deleteDoc,
   serverTimestamp,
-  onSnapshot, // ← 追加
+  onSnapshot,
 } from "firebase/firestore";
 
 // --- セッションIDをブラウザごとに保持 ---
@@ -24,12 +24,11 @@ const saveSessionId = (sid: string | null) =>
     : sessionStorage.removeItem(SESSION_ID_KEY);
 const loadSessionId = () => sessionStorage.getItem(SESSION_ID_KEY);
 
-
 // 他端末奪取を検知して自タブを落とすためのリスナー管理
 let stopSessionWatch: (() => void) | null = null;
 let currentSessionId: string | null = null;
 
-// 今ログインしてるかどうかのフック（そのまま）
+// 今ログインしてるかどうかのフック
 export function useAuthUser() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -86,7 +85,7 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
         { merge: false } // ← 他端末ログイン中でも完全上書き
       );
       currentSessionId = newSessionId;
-saveSessionId(newSessionId); // ← これを追加
+      saveSessionId(newSessionId);
 
       // 3) 監視開始：自分の sessionId と違う=他端末に奪取 → 即サインアウト
       if (stopSessionWatch) {
@@ -211,54 +210,75 @@ export function useSessionGuard(user: User | null) {
     let cancelled = false;
     let stopWatch: (() => void) | null = null;
 
+    // 最初の1回だけ確認
+    // ローカルに sessionId が無ければ、サーバー側の sessionId を引き継ぐ
     const checkOnce = async () => {
       const snap = await getDoc(ref);
       if (!snap.exists()) return false;
+
       const d = snap.data() as any;
       const mine = loadSessionId();
+
+      // ローカルにない → サーバー側の sessionId を採用してOKにする
+      if (!mine && d.sessionId) {
+        saveSessionId(d.sessionId);
+        currentSessionId = d.sessionId;
+        return true;
+      }
+
+      // どちらもある → 一致しているかどうかチェック
       return !!mine && d.sessionId === mine;
     };
 
     const run = async () => {
       setChecking(true);
 
-      // 最初に一回確認
       const firstOk = await checkOnce();
       if (!cancelled) {
         setOk(firstOk);
         setChecking(false);
       }
 
-      // 以降はリアルタイム監視：別ブラウザのログイン（奪取）を即検知
+      // ここからリアルタイム監視（他端末ログイン奪取検知）
       stopWatch = onSnapshot(ref, (snap) => {
         const d = snap.data() as any | undefined;
         const mine = loadSessionId();
 
-        // ドキュメントが無い or 明示サインアウトは即落とす
+        // ドキュメントが消えた or 明示サインアウト → 即落とす
         if (!d || d.status === "signedOut") {
           stopWatch?.();
           stopWatch = null;
           saveSessionId(null);
+          currentSessionId = null;
           signOut(auth).catch(() => {});
           return;
         }
 
-        // 自分の sessionId がまだ未設定の瞬間は様子見（蹴らない）
+        // ローカルに sessionId がない ＆ サーバーにある → 引き継いでOKにする
+        if (!mine && d.sessionId) {
+          saveSessionId(d.sessionId);
+          currentSessionId = d.sessionId;
+          if (!cancelled) setOk(true);
+          return;
+        }
+
+        // ここまで来て mine がない = サーバーにも無い/未設定など → 一時的にNG扱い
         if (!mine) {
           if (!cancelled) setOk(false);
           return;
         }
 
-        // 自分の sessionId があり、doc 側と不一致なら奪取 → 落とす
+        // 自分の sessionId とサーバー側が不一致 → 他端末に奪われたので落とす
         if (d.sessionId !== mine) {
           stopWatch?.();
           stopWatch = null;
           saveSessionId(null);
+          currentSessionId = null;
           signOut(auth).catch(() => {});
           return;
         }
 
-        // 一致している＝OK
+        // 一致している → OK
         if (!cancelled) setOk(true);
       });
     };
