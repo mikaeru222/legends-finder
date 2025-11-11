@@ -8,6 +8,8 @@ import { loadCards as loadCx3Cards, loadPositions, type PositionRow, SPECIAL_P }
 import { colorForRarity, toHalf } from "./lib/rarity";
 import "./firebase";
 import { useAuthUser, useSessionGuard, SignInCard, SignOutButton } from "./auth";
+import AdminPage from "./AdminPage";
+
 
 
 /** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
@@ -319,9 +321,16 @@ function removePair(id: string) {
 
 // ========= App =========
 export default function App() {
+  // 現在のパス（/legends-finder/admin みたいなのが入る）
+  const path = window.location.pathname;
+  const isAdminPath =
+    path === "/admin" ||
+    path.endsWith("/admin") ||
+    path.includes("/admin/");
+
   const { user, ready } = useAuthUser();
   const { checking, ok } = useSessionGuard(user);
-  const [loginMsg, setLoginMsg] = useState("");   // ← ここ追加
+  const [loginMsg, setLoginMsg] = useState(""); // ← もともとのやつ
 
   // 準備中
   if (!ready || checking) {
@@ -345,7 +354,7 @@ export default function App() {
             <h1>ガンバレジェンズ配列表 検索ツール</h1>
           </div>
         </header>
-        <SignInCard onBlocked={setLoginMsg} />  {/* ← ここで受け取る */}
+        <SignInCard onBlocked={setLoginMsg} />
         {loginMsg && (
           <div
             style={{
@@ -391,15 +400,34 @@ export default function App() {
   }
 
   // ログイン済
+  // ここでだけ /admin かどうかを見て、管理画面 or 通常画面を切り替える
+  if (isAdminPath) {
+    return <AdminPage />;
+  }
+
   return <AppBody />;
 }
 
+// ← この下の AppBody は今までどおりでOK
+
 
 function AppBody() {
+  // ★ 管理者判定用にログインユーザーを取得
+  const { user } = useAuthUser();
+  const isAdmin =
+    user?.email === "yuutodayo222@gmail.com" ||
+    user?.email === "mikaeru222@gmail.com";
 
-  
+  // ★ 管理画面へ飛ぶ処理
+  const goAdmin = () => {
+    // /legends-finder/ や /legends-finder/admin からでも安定して /admin に飛ぶ
+    const base = window.location.pathname.replace(/\/admin\/?$/, "");
+    const withSlash = base.endsWith("/") ? base.slice(0, -1) : base;
+    window.location.pathname = withSlash + "/admin";
+  };
 
   const { rows, sets, loading, error } = useCsvData(CSV_URL);  // ← 既存の処理はこの下から
+
 
   const rowsNorm = useMemo(() => rows.map(r => ({ ...r, set: String(r?.set ?? r?.series ?? r?.["シリーズ"] ?? r?.["弾"] ?? "").trim().toUpperCase() })), [rows]);
 
@@ -1373,16 +1401,43 @@ function applySavedPair(p: SavedPair) {
   nav("leftResults");
 }
 
-  return (
+    return (
     <main className="app">
       <header className="header">
-  <div className="header-inner">
-    <h1>ガンバレジェンズ配列表 検索ツール</h1>
-    <div className="header-actions">
-      <SignOutButton />
-    </div>
-  </div>
-</header>
+        <div className="header-inner">
+          <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          <SignOutButton />
+        </div>
+      </header>
+
+            {/* ★ 追加：青い帯の“下”にだけ出る管理ボタン（テキスト＋控えめカラー） */}
+            {isAdmin && (
+        <div
+          style={{
+            maxWidth: 960,
+            margin: "8px auto",
+            padding: "4px 16px 0",
+            textAlign: "right",
+          }}
+        >
+          <button
+            onClick={goAdmin}
+            style={{
+              padding: "4px 12px",
+              borderRadius: 9999,
+              border: "1px solid #60a5fa", // 青枠
+              background: "#ffffff",        // 白背景
+              color: "#1d4ed8",             // 濃いめの青文字
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            管理画面へ
+          </button>
+        </div>
+      )}
+
+    
 
 
 

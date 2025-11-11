@@ -1,32 +1,12 @@
 // src/auth.tsx
 import { useEffect, useState } from "react";
-import { auth, db } from "./firebase";
+import { auth } from "./firebase";
 import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
 } from "firebase/auth";
-import {
-  doc,
-  getDoc,
-  setDoc,
-  deleteDoc,
-  serverTimestamp,
-  onSnapshot,
-} from "firebase/firestore";
-
-// --- セッションIDをブラウザごとに保持 ---
-const SESSION_ID_KEY = "cx5:sessionId";
-const saveSessionId = (sid: string | null) =>
-  sid
-    ? sessionStorage.setItem(SESSION_ID_KEY, sid)
-    : sessionStorage.removeItem(SESSION_ID_KEY);
-const loadSessionId = () => sessionStorage.getItem(SESSION_ID_KEY);
-
-// 他端末奪取を検知して自タブを落とすためのリスナー管理
-let stopSessionWatch: (() => void) | null = null;
-let currentSessionId: string | null = null;
 
 // 今ログインしてるかどうかのフック
 export function useAuthUser() {
@@ -65,52 +45,12 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
 
   const doSignIn = async () => {
     setErr("");
+    onBlocked?.("");
 
     try {
-      // 1) Auth でログイン
+      // シンプルに Auth でログインするだけ
       const email = normalizeToEmail(idOrEmail);
-      const cred = await signInWithEmailAndPassword(auth, email, pass);
-      const uid = cred.user.uid;
-
-      // 2) Firestore のセッションを常に「上書き作成」し、sessionId を固定
-      const sessionRef = doc(db, "sessions", uid);
-      const newSessionId = crypto.randomUUID();
-      await setDoc(
-        sessionRef,
-        {
-          uid,
-          sessionId: newSessionId,
-          createdAt: serverTimestamp(),
-        },
-        { merge: false } // ← 他端末ログイン中でも完全上書き
-      );
-      currentSessionId = newSessionId;
-      saveSessionId(newSessionId);
-
-      // 3) 監視開始：自分の sessionId と違う=他端末に奪取 → 即サインアウト
-      if (stopSessionWatch) {
-        stopSessionWatch();
-        stopSessionWatch = null;
-      }
-      stopSessionWatch = onSnapshot(sessionRef, (snap) => {
-        const d = snap.data() as any | undefined;
-        // ドキュメントが消えた or status変更 or sessionIdが変わったら落とす
-        const kicked =
-          !d ||
-          d.status === "signedOut" ||
-          (currentSessionId && d.sessionId !== currentSessionId);
-
-        if (kicked) {
-          // 監視解除してからサインアウト
-          stopSessionWatch?.();
-          stopSessionWatch = null;
-          currentSessionId = null;
-          signOut(auth).catch(() => {});
-        }
-      });
-
-      // これで：「新しいログインが来た瞬間、古い端末は自動でサインアウト」
-
+      await signInWithEmailAndPassword(auth, email, pass);
     } catch (e: any) {
       const msg =
         e?.message?.includes("auth/invalid-credential") ||
@@ -118,6 +58,7 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
           ? "IDまたはパスワードが違います"
           : e?.message || "ログインに失敗しました";
       setErr(msg);
+      onBlocked?.(msg);
     }
   };
 
@@ -168,22 +109,6 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
 // サインアウトボタン
 export function SignOutButton() {
   const doSignOut = async () => {
-    const u = auth.currentUser;
-    // 先に Firestore のセッションを消す
-    if (u) {
-      const sessionRef = doc(db, "sessions", u.uid);
-      await deleteDoc(sessionRef).catch(() => {
-        // ないときは無視
-      });
-    }
-    // 監視解除
-    if (stopSessionWatch) {
-      stopSessionWatch();
-      stopSessionWatch = null;
-    }
-    currentSessionId = null;
-
-    // そのあと Auth もサインアウト
     await signOut(auth);
   };
 
@@ -194,103 +119,9 @@ export function SignOutButton() {
   );
 }
 
-// === BEGIN useSessionGuard (置き換え) ===
+// === BEGIN useSessionGuard（今は何もしない版） ===
 export function useSessionGuard(user: User | null) {
-  const [checking, setChecking] = useState(false);
-  const [ok, setOk] = useState(true);
-
-  useEffect(() => {
-    // 未ログインならOK扱い
-    if (!user) {
-      setOk(true);
-      return;
-    }
-
-    const ref = doc(db, "sessions", user.uid);
-    let cancelled = false;
-    let stopWatch: (() => void) | null = null;
-
-    // 最初の1回だけ確認
-    // ローカルに sessionId が無ければ、サーバー側の sessionId を引き継ぐ
-    const checkOnce = async () => {
-      const snap = await getDoc(ref);
-      if (!snap.exists()) return false;
-
-      const d = snap.data() as any;
-      const mine = loadSessionId();
-
-      // ローカルにない → サーバー側の sessionId を採用してOKにする
-      if (!mine && d.sessionId) {
-        saveSessionId(d.sessionId);
-        currentSessionId = d.sessionId;
-        return true;
-      }
-
-      // どちらもある → 一致しているかどうかチェック
-      return !!mine && d.sessionId === mine;
-    };
-
-    const run = async () => {
-      setChecking(true);
-
-      const firstOk = await checkOnce();
-      if (!cancelled) {
-        setOk(firstOk);
-        setChecking(false);
-      }
-
-      // ここからリアルタイム監視（他端末ログイン奪取検知）
-      stopWatch = onSnapshot(ref, (snap) => {
-        const d = snap.data() as any | undefined;
-        const mine = loadSessionId();
-
-        // ドキュメントが消えた or 明示サインアウト → 即落とす
-        if (!d || d.status === "signedOut") {
-          stopWatch?.();
-          stopWatch = null;
-          saveSessionId(null);
-          currentSessionId = null;
-          signOut(auth).catch(() => {});
-          return;
-        }
-
-        // ローカルに sessionId がない ＆ サーバーにある → 引き継いでOKにする
-        if (!mine && d.sessionId) {
-          saveSessionId(d.sessionId);
-          currentSessionId = d.sessionId;
-          if (!cancelled) setOk(true);
-          return;
-        }
-
-        // ここまで来て mine がない = サーバーにも無い/未設定など → 一時的にNG扱い
-        if (!mine) {
-          if (!cancelled) setOk(false);
-          return;
-        }
-
-        // 自分の sessionId とサーバー側が不一致 → 他端末に奪われたので落とす
-        if (d.sessionId !== mine) {
-          stopWatch?.();
-          stopWatch = null;
-          saveSessionId(null);
-          currentSessionId = null;
-          signOut(auth).catch(() => {});
-          return;
-        }
-
-        // 一致している → OK
-        if (!cancelled) setOk(true);
-      });
-    };
-
-    run();
-
-    return () => {
-      cancelled = true;
-      stopWatch?.();
-    };
-  }, [user]);
-
-  return { checking, ok };
+  // 多重ログイン監視は一旦停止して、常にOK扱いにする
+  return { checking: false, ok: true };
 }
 // === END useSessionGuard ===
