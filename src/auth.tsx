@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth";
+import { claimSession, startSessionWatcher } from "./singleSession";
 
 // 今ログインしてるかどうかのフック
 export function useAuthUser() {
@@ -58,7 +59,7 @@ export function SignInCard({ onBlocked }: SignInCardProps) {
           ? "IDまたはパスワードが違います"
           : e?.message || "ログインに失敗しました";
       setErr(msg);
-      onBlocked?.(msg);
+      
     }
   };
 
@@ -119,9 +120,62 @@ export function SignOutButton() {
   );
 }
 
-// === BEGIN useSessionGuard（今は何もしない版） ===
+// === BEGIN useSessionGuard（多重ログイン監視：新しい端末が勝ち） ===
 export function useSessionGuard(user: User | null) {
-  // 多重ログイン監視は一旦停止して、常にOK扱いにする
-  return { checking: false, ok: true };
+  const [checking, setChecking] = useState(false);
+  const [ok, setOk] = useState(true);
+
+  useEffect(() => {
+    let stopWatch: (() => void) | null = null;
+    let cancelled = false;
+
+    // ユーザーがいないときはガード不要
+    if (!user) {
+      setChecking(false);
+      setOk(true);
+      if (stopWatch) {
+        stopWatch();
+        stopWatch = null;
+      }
+      return () => {};
+    }
+
+    // ユーザーがいるときだけガード開始
+    setChecking(true);
+    setOk(true);
+
+    (async () => {
+      try {
+        // ★ 新しくログインした端末が「勝ち」
+        await claimSession(user);
+
+        if (cancelled) return;
+
+        // 別端末にセッションを奪われたら自動ログアウトさせる
+        stopWatch = startSessionWatcher(user, async () => {
+          alert("他の端末でログインされました。この端末はログアウトします。");
+          setOk(false);
+          setChecking(false);
+          await signOut(auth);
+        });
+
+        setChecking(false);
+      } catch (e) {
+        console.error("useSessionGuard error", e);
+        setChecking(false);
+        setOk(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (stopWatch) {
+        stopWatch();
+        stopWatch = null;
+      }
+    };
+  }, [user]);
+
+  return { checking, ok };
 }
 // === END useSessionGuard ===

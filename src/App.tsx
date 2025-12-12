@@ -9,7 +9,54 @@ import { colorForRarity, toHalf } from "./lib/rarity";
 import "./firebase";
 import { useAuthUser, useSessionGuard, SignInCard, SignOutButton } from "./auth";
 import AdminPage from "./AdminPage";
+// 他の import の近くに追加
+import { useCxSets } from "./hooks/useCxSets";
+import { useUser } from "./useUser";
+// Firestore を優先して読み込むか？（true で Fire優先 / false でローカル優先）
+const USE_FIRESTORE = true;
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { app } from "./firebase"; // ★忘れてたら必ず入れる
 
+const firebaseBase =
+  "https://firebasestorage.googleapis.com/v0/b/legends-finder-65557.firebasestorage.app/o";
+
+function abs(rel: string) {
+  // 絶対URLならそのまま
+  if (rel.startsWith("http://") || rel.startsWith("https://")) {
+    return rel;
+  }
+
+  // ✅ cx_sets/ から始まるパスだけ Firebase Storage を見る
+  if (rel.startsWith("cx_sets/")) {
+    return `${firebaseBase}/${encodeURIComponent(rel)}?alt=media`;
+  }
+
+  // それ以外は今まで通り「ローカル public」から読む
+  try {
+    const baseEnv = (import.meta as any)?.env?.BASE_URL;
+    const base =
+      typeof baseEnv === "string" && baseEnv.length ? baseEnv : "/";
+    const origin =
+      typeof window !== "undefined" && (window as any).location?.origin
+        ? (window as any).location.origin
+        : "http://localhost";
+    const baseNorm = base.startsWith("/") ? base : "/" + base;
+    return origin.replace(/\/+$/, "") + baseNorm + String(rel).replace(/^\/+/, "");
+  } catch {
+    return "/" + String(rel).replace(/^\/+/, "");
+  }
+}
+
+// positions から「使っている列番号だけを抜き出す」汎用関数
+const buildRowIndexFromPositions = (pos: PositionRow[]): Set<number> => {
+  const idx = new Set<number>();
+  for (const p of pos) {
+    if (typeof p.col === "number") {
+      idx.add(p.col);
+    }
+  }
+  return idx;
+};
 
 
 /** セレクト（CX3等）の実寸幅を固定するピクセル値。詰めたいなら 80 などに変更 */
@@ -41,16 +88,7 @@ const setRegistry = (family: string, dicts: Dicts) => {
 
 
 /* ========= ユーティリティ ========= */
-const abs = (path: string) => {
-  try {
-    const baseEnv = (import.meta as any)?.env?.BASE_URL;
-    const base = (typeof baseEnv === "string" && baseEnv.length) ? baseEnv : "/";
-    const origin = (typeof window !== "undefined" && (window as any).location?.origin)
-      ? (window as any).location.origin : "http://localhost";
-    const baseNorm = base.startsWith("/") ? base : ("/" + base);
-    return origin.replace(/\/+$/, "") + baseNorm + String(path).replace(/^\/+/, "");
-  } catch { return "/" + String(path).replace(/^\/+/, ""); }
-};
+
 const CSV_URL = abs((import.meta as any).env.VITE_CSV_URL || "cards.cx3.csv");
 const MAX_LR_CANDIDATES = 4;
 const SEARCH_BLUE = "#1677FF";
@@ -185,32 +223,32 @@ const normalizeSetKey = (input: string): string => {
   // XC → CX（タイプミス／並び違いを吸収）
   s = s.replace(/^XC/, "CX");
 
-  // "CX-5" → "CX5"
-  s = s.replace(/^CX-?([345])$/, "CX$1");
+  // "CX-5" や "CX-99" → "CX5" / "CX99"
+  s = s.replace(/^CX-?(\d+)$/, "CX$1");
 
   return s;
 };
 
 // 与えられた文字列からセットキーを検出して正規化して返す
-// 例: "これはcx-5です" → "CX5" / マッチしなければ元の normalize 結果を返す
+// 例: "これはcx-5です" → "CX5" / "これはcx-99です" → "CX99"
 const detectSetKey = (raw: string): string => {
   const s = normalizeSetKey(raw);
-  const m = s.match(/CX[345]/);
+  const m = s.match(/CX\d+/);   // ★ CX3/4/5 だけでなく CX99 なども拾う
   return m ? m[0] : s;
 };
 
-
-// CX3/CX4/CX5 を“完全配列表モード”として扱う
+// 「CX3/CX4/CX5 だけ」ではなく「CX+数字なら全部」配列表モード扱い
 const isCxMode = (setKey: string) => {
   const key = detectSetKey(setKey);
-  return /^(CX[345])$/.test(key);
+  return /^CX\d+$/.test(key);
 };
 
-
-// 表記ブレは detectSetKey で正規化し、完全一致だけ許可
+// 表記ブレは detectSetKey で正規化し、完全一致だけ許可（ここは従来通り）
 const isCx3 = (key: string) => detectSetKey(key) === "CX3";
 const isCx4 = (key: string) => detectSetKey(key) === "CX4";
 const isCx5 = (key: string) => detectSetKey(key) === "CX5";
+
+
 
 
 /* ========= 永続保存（複数件対応 / localStorage） ========= */
@@ -412,49 +450,80 @@ export default function App() {
 
 
 function AppBody() {
-  // ★ 管理者判定用にログインユーザーを取得
-  const { user } = useAuthUser();
-  const isAdmin =
-    user?.email === "yuutodayo222@gmail.com" ||
-    user?.email === "mikaeru222@gmail.com";
-
-  // ★ 管理画面へ飛ぶ処理
+  // ★ 追加するのはこの1行だけ
+  const { isAdmin } = useUser();
   const goAdmin = () => {
-    // /legends-finder/ や /legends-finder/admin からでも安定して /admin に飛ぶ
     const base = window.location.pathname.replace(/\/admin\/?$/, "");
     const withSlash = base.endsWith("/") ? base.slice(0, -1) : base;
     window.location.pathname = withSlash + "/admin";
   };
 
-  const { rows, sets, loading, error } = useCsvData(CSV_URL);  // ← 既存の処理はこの下から
+  // === 弾データ読み込み ＋ Firestore の弾一覧 ===
 
+  // 既存：CSV から配列表を読む
+  const { rows, sets, loading, error } = useCsvData(CSV_URL);
 
-  const rowsNorm = useMemo(() => rows.map(r => ({ ...r, set: String(r?.set ?? r?.series ?? r?.["シリーズ"] ?? r?.["弾"] ?? "").trim().toUpperCase() })), [rows]);
+  // 新規：Firestore の cx_sets から弾一覧を読む
+  const { sets: cxSets } = useCxSets();
 
+  // rowsNorm は他のロジックでも使っているので今まで通り残す
+  const rowsNorm = useMemo(
+    () =>
+      rows.map((r) => ({
+        ...r,
+        set: String(r?.set ?? r?.series ?? r?.["シリーズ"]),
+      })),
+    [rows]
+  );
+
+    // Firestore から取った setId 一覧（例: ["CX5","CX99", ...]）
+  const setIdList = useMemo(
+    () => cxSets.map((s) => s.setId),
+    [cxSets]
+  );
+
+  // セット選択プルダウン用の候補
   const setOptions = useMemo(() => {
-    const seen = new Set<string>();
-    rowsNorm.forEach(r => { const key = String(r.set || "").trim(); if (key) seen.add(key); });
-    const arr = [...seen];
-    if (!arr.includes("CX3")) arr.push("CX3");
-if (!arr.includes("CX4")) arr.push("CX4");
-if (!arr.includes("CX5")) arr.push("CX5"); // ← これを追加
+    // Firestore ベース
+    const arr = [...setIdList];
 
-    return arr.sort((a,b)=>{
-  const na = parseInt(a.replace(/\D+/g,""),10);
-  const nb = parseInt(b.replace(/\D+/g,""),10);
-  if (!Number.isNaN(na) && !Number.isNaN(nb)) return nb - na; // 降順
-  return b.localeCompare(a,"ja"); // フォールバックも降順
-});
+    // 念のため、古い固定弾も補完（cx_sets に入っていれば二重にはならない）
+    ["CX3", "CX4", "CX5"].forEach((id) => {
+      if (!arr.includes(id)) arr.push(id);
+    });
 
-  }, [rowsNorm]);
+    // 数字部分で降順ソート（CX99, CX5, CX4, ... のイメージ）
+    return arr.sort((a, b) => {
+      const na = parseInt(a.replace(/\D+/g, ""), 10);
+      const nb = parseInt(b.replace(/\D+/g, ""), 10);
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return nb - na; // 降順
+      return b.localeCompare(a, "ja"); // フォールバックも降順
+    });
+  }, [setIdList]);
 
-  const [leftSet, setLeftSet] = useState("CX5");
-const [rightSet, setRightSet] = useState("CX5");
+    // 最初は空にしておく
+  const [leftSet, setLeftSet] = useState("");
+  const [rightSet, setRightSet] = useState("");
 
+  // setOptions の先頭（＝最新のCX弾）を初期値として使う
   useEffect(() => {
-  if (!leftSet) setLeftSet("CX5");
-  if (!rightSet) setRightSet("CX5");
-}, []);
+    // setOptions 自体が空なら何もしない
+    if (!setOptions.length) return;
+
+    // ★ Firestore から setIdList がまだ来ていない間は初期化しない
+    //    （["CX3","CX4","CX5"] だけの段階では触らない）
+    if (!setIdList.length) return;
+
+    const first = setOptions[0]; // ここが CX99 になる
+
+    if (!leftSet) {
+      setLeftSet(first);
+    }
+    if (!rightSet) {
+      setRightSet(first);
+    }
+  }, [setOptions, setIdList, leftSet, rightSet]);
+
 
 
 
@@ -567,7 +636,7 @@ const isMobile = typeof window !== "undefined"
   const [cx5KeyRarity, setCx5KeyRarity] = useState<Map<string, string>>(new Map());
 const [cx5KeyName,   setCx5KeyName]   = useState<Map<string, string>>(new Map());
 
-  const deriveKeys = (codeRaw: string): string[] => {
+      const deriveKeys = (codeRaw: string): string[] => {
     const u = toHalf(String(codeRaw||"")).toUpperCase().trim();
     const keys = new Set<string>();
     keys.add(u);
@@ -578,12 +647,73 @@ const [cx5KeyName,   setCx5KeyName]   = useState<Map<string, string>>(new Map())
       if (m) {
         const n  = String(parseInt(m[1],10));
         const n2 = n.padStart(2,"0");
-        if (m[2]) { keys.add(`${n}P`); keys.add(`${n2}P`); }
-        else { keys.add(n); keys.add(n2); keys.add(`${n}P`); keys.add(`${n2}P`); }
+        if (m[2]) {
+          keys.add(`${n}P`);
+          keys.add(`${n2}P`);
+        } else {
+          keys.add(n);
+          keys.add(n2);
+          keys.add(`${n}P`);
+          keys.add(`${n2}P`);
+        }
       }
     }
     return [...keys];
   };
+
+     // ★ CX100 / 旧セット対応版レアリティ抽出
+const extractRarity = (row: any): string => {
+  if (!row || typeof row !== "object") return "";
+
+  const pick = (key: string): string => {
+    const v = (row as any)[key];
+    if (v === undefined || v === null) return "";
+    return String(v).trim();
+  };
+
+  // 1) CX100 形式: rarity_base + rarity_mark から作る
+  const baseRaw =
+    pick("rarity_base") ||  // 正しい綴り
+    pick("rarity_bas");     // もし bas になっていても拾える保険
+
+  const markRaw =
+    pick("rarity_mark") ||  // 正しい綴り（★ 今のCSVはここ）
+    pick("rarity_mar");     // もし mar になっていても拾える保険
+
+  let base = "";
+  if (baseRaw) {
+    // 全角→半角→大文字にしてそろえる
+    base = toHalf(baseRaw).toUpperCase().trim();
+  }
+
+  let hasStar = false;
+  if (markRaw) {
+    const s = toHalf(markRaw).toUpperCase().trim();
+    // F / ★ のどちらでも「★付き」とみなす
+    if (s === "F" || s === "★") {
+      hasStar = true;
+    }
+  }
+
+  if (base) {
+    // 例: base = "LR", hasStar = true → "LR★"
+    return base + (hasStar ? "★" : "");
+  }
+
+  // 2) 旧CSV用: rarity 列だけのパターン
+  const directRaw =
+    pick("rarity") ||
+    pick("rarity_main") ||
+    pick("レアリティ") ||
+    pick("レア");
+
+  if (directRaw) {
+    return toHalf(directRaw).toUpperCase().trim();
+  }
+
+  return "";
+};
+
 
   useEffect(() => { (async ()=>{
     try{
@@ -633,182 +763,453 @@ const [cx5KeyName,   setCx5KeyName]   = useState<Map<string, string>>(new Map())
           }
         }catch{}
       }
-// === CX5 の辞書を読み込む（cards.cx5.csv 他の別名も許容） ===
-for (const src of ["cards.cx5.csv", "cx5_cards.csv", "cs5_cards.csv"]) {
-  try {
-    const rows5 = await loadCx3Cards(abs(src));
-    for (const c of rows5 as any[]) {
-      const code = String(c.code ?? "");
-      const name = String(c.name ?? "");
-      const rar  = String(c.rarity ?? "");
-      // 既存の deriveKeys を使ってコード表記ゆれを吸収
-      for (const k of deriveKeys(code)) {
-        if (name && !mpCX5N.has(k)) mpCX5N.set(k, name);
-        if (rar  && !mpCX5R.has(k)) mpCX5R.set(k, rar);
+
+      // === CX5 の辞書を読み込む（cards.cx5.csv 他の別名も許容） ===
+      for (const src of ["cards.cx5.csv", "cx5_cards.csv", "cs5_cards.csv"]) {
+        try {
+          const rows5 = await loadCx3Cards(abs(src));
+          for (const c of rows5 as any[]) {
+            const code = String(c.code ?? "");
+            const name = String(c.name ?? "");
+            const rar  = String(
+              (c as any).rarity ?? (c as any).rarity_base ?? (c as any).rarity_main ?? ""
+            );
+
+            // 既存の deriveKeys を使ってコード表記ゆれを吸収
+            for (const k of deriveKeys(code)) {
+              if (name && !mpCX5N.has(k)) mpCX5N.set(k, name);
+              if (rar  && !mpCX5R.has(k)) mpCX5R.set(k, rar);
+            }
+          }
+          break; // どれか1つ読めたらOK
+        } catch {}
       }
-    }
-    break; // どれか1つ読めたらOK
-  } catch {}
-}
 
- setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
-setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
-setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
-setCx5KeyRarity(mpCX5R);       setCx5KeyName(mpCX5N); // ← 追加！
+      setCommonKeyRarity(mpCommonR); setCommonKeyName(mpCommonN);
+      setCx3KeyRarity(mpCX3R);       setCx3KeyName(mpCX3N);
+      setCx4KeyRarity(mpCX4R);       setCx4KeyName(mpCX4N);
+      setCx5KeyRarity(mpCX5R);       setCx5KeyName(mpCX5N); // ← CX5
 
-setRegistry("COMMON", { rarity: mpCommonR, name: mpCommonN, specialP: SPECIAL_P });
-setRegistry("CX3",    { rarity: mpCX3R,    name: mpCX3N,    specialP: SPECIAL_P });
-setRegistry("CX4",    { rarity: mpCX4R,    name: mpCX4N,    specialP: SPECIAL_P });
-setRegistry("CX5",    { rarity: mpCX5R,    name: mpCX5N,    specialP: SPECIAL_P });
+      setRegistry("COMMON", { rarity: mpCommonR, name: mpCommonN, specialP: SPECIAL_P });
+      setRegistry("CX3",    { rarity: mpCX3R,    name: mpCX3N,    specialP: SPECIAL_P });
+      setRegistry("CX4",    { rarity: mpCX4R,    name: mpCX4N,    specialP: SPECIAL_P });
+      setRegistry("CX5",    { rarity: mpCX5R,    name: mpCX5N,    specialP: SPECIAL_P });
 
-
-// ★ ここまで
+      // ★ ここまで
 
     }catch(e){ console.warn("cards csv 読込失敗:", e); }
   })() }, []);
 
+         // ★ 追加CX用のカード名/レア辞書を cx_sets から動的にロード（CX3/4/5 以外）
+  useEffect(() => {
+    (async () => {
+      for (const s of cxSets as any[]) {
+        const fam = parseSetFamily(String(s.setId ?? ""));
+
+        // CX3/4/5 はローカルCSVで読み込み済みなのでスキップ
+        if (fam === "CX3" || fam === "CX4" || fam === "CX5") continue;
+        if (!fam) continue;
+
+        // ---- 読み込み候補パスを列挙 ----
+        const candidates: string[] = [];
+
+        // 1) Firestore に明示的なパスがあれば最優先
+        if (s.csvUrl)    candidates.push(String(s.csvUrl));
+        if (s.cardsPath) candidates.push(String(s.cardsPath));
+
+        // 2) setId / storageBaseName から自動推測
+        const base =
+          (s.storageBaseName as string | undefined)?.toString() ||
+          fam.toLowerCase(); // 例: "CX100" → "cx100"
+
+        // ルート直下: "cx100_cards.csv"
+        candidates.push(`${base}_cards.csv`);
+        // Storage: "cx_sets/CX100/cards.cx100.csv"
+        candidates.push(`cx_sets/${fam}/cards.${base}.csv`);
+        // Storage: "cx_sets/CX100/cards.csv"
+        candidates.push(`cx_sets/${fam}/cards.csv`);
+
+        // ---- 実際に読めるものを一つ選ぶ ----
+        let rows: any[] | null = null;
+        for (const rel of candidates) {
+          try {
+            const url =
+              rel.startsWith("http://") || rel.startsWith("https://")
+                ? rel
+                : abs(rel);
+
+            rows = await loadCx3Cards(url);
+            console.log("extra cards loaded:", fam, rel, rows.length);
+            break;
+          } catch (e) {
+            console.warn("extra cards read fail, try next:", fam, rel, e);
+          }
+        }
+        if (!rows?.length) continue;
+
+        console.log("DEBUG CX sample row", fam, rows[0], Object.keys(rows[0]));
+
+        // ★ この弾の中でレアリティが1つでも入っている行があるか確認
+        let nonEmptyRarityCount = 0;
+        for (const c of rows as any[]) {
+          const rarTest = extractRarity(c);
+          if (rarTest) nonEmptyRarityCount++;
+        }
+
+      const totalRows  = rows.length;  // ★ これを先に足す
+const firstRowRaw = rows[0];
+
+console.log("DEBUG CX rarity scan:", fam, {
+  totalRows,
+  nonEmptyRarityCount,
   
+  firstRowRaw,
+  firstRowKeys: Object.keys(firstRowRaw ?? {}),
+});
+
+
+console.log("DEBUG CX firstRowKeys:", fam, Object.keys(firstRowRaw ?? {}));
+console.log("DEBUG CX firstRowRaw JSON:", fam, JSON.stringify(firstRowRaw ?? {}, null, 2));
+
+
+
+        // ---- 読み込んだ rows から辞書を構築 ----
+        const mpR = new Map<string, string>();
+        const mpN = new Map<string, string>();
+
+        for (const c of rows as any[]) {
+          const code = String(c.code ?? "");
+          const name = String(c.name ?? "");
+
+          // ★ CX100対応版：ここでレアリティを作る（空のときはデバッグログ）
+          const rar = extractRarity(c);
+          if (!rar) {
+            console.log("DEBUG CX rarity empty row:", fam, {
+              code:        (c as any).code,
+              name:        (c as any).name,
+              rarity:      (c as any).rarity,
+              rarity_base: (c as any).rarity_base,
+              rarity_mar:  (c as any).rarity_mar,
+              rarity_mark: (c as any).rarity_mark,
+            });
+          }
+
+          // コードから 7 / 07 / 7P / 07P みたいな派生キーを作る
+          const keys = deriveKeys(code);
+
+          for (const k of keys) {
+            if (name && !mpN.has(k)) mpN.set(k, name);
+            if (rar  && !mpR.has(k)) mpR.set(k, rar);
+          }
+        }
+
+        // REGISTRY に登録
+        setRegistry(fam, { rarity: mpR, name: mpN, specialP: SPECIAL_P });
+
+        // 確認用ログ
+        console.log("DEBUG CX100 dict :", {
+          fam,
+          raritySize: mpR.size,
+          nameSize: mpN.size,
+        });
+
+      }
+    })();
+  }, [cxSets]);
+
   // 置き換え版（SPECIAL_P を最優先）
+  const rarityStrictFor = (setKey: string) => (rawToken: string) => {
+    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+
+    // 対象セットの辞書（COMMON フォールバックは getDicts 側）
+    const { rarity, specialP } = getDicts(setKey);
+
+    // SPECIAL_P は常に LR★ 優先
+    if (specialP.has(t)) return "LR★";
+
+    // 完全一致
+    if (rarity.has(t)) return rarity.get(t)!;
+
+    // 数字/P/ゼロ埋め補完
+    const m = t.match(/^(\d+)(P)?$/);
+    if (m) {
+      const n  = String(parseInt(m[1], 10));
+      const n2 = n.padStart(2, "0");
+      const wantP = !!m[2];
+      if (wantP) {
+        return (
+          rarity.get(`${n}P`) ||
+          rarity.get(`${n2}P`) ||
+          undefined
+        );
+      }
+      return (
+        rarity.get(n) ||
+        rarity.get(n2) ||
+        undefined
+      );
+    }
+
+    // 最後に COMMON を保険
+    const { rarity: commonRarity } = getDicts("COMMON");
+    if (commonRarity.has(t)) return commonRarity.get(t);
+
+    return undefined;
+  };
 
 
-    // （確認用ログ。不要なら消してOK）
-    
-  // ← deriveKeys の直下に貼る
-  // ← deriveKeys の直下：REGISTRY（getDicts）経由に差し替え
-const rarityStrictFor = (setKey: string) => (rawToken: string) => {
-  const t = toHalf(String(rawToken || "")).toUpperCase().trim();
+  const nameLooseFor = (setKey: string) => (rawToken: string) => {
+    const t = toHalf(String(rawToken || "")).toUpperCase().trim();
 
-  // 対象セットの辞書（COMMON フォールバックは getDicts 側）
-  const { rarity, specialP } = getDicts(setKey);
+    // セット名辞書＆COMMON 名辞書
+    const { name } = getDicts(setKey);
+    const { name: commonName } = getDicts("COMMON");
 
-  // SPECIAL_P は常に LR★ 優先
-  if (specialP.has(t)) return "LR★";
+    // 完全一致
+    if (name.has(t)) return name.get(t);
 
-  // 完全一致
-  if (rarity.has(t)) return rarity.get(t)!;
+    // 派生キー（7/07/7P/07P など）で探索
+    for (const k of deriveKeys(t)) {
+      const n = name.get(k) || commonName.get(k);
+      if (n) return n;
+    }
+    return undefined;
+  };
 
-  // 数字/P/ゼロ埋め補完
-  const m = t.match(/^(\d+)(P)?$/);
-  if (m) {
-    const n  = String(parseInt(m[1], 10));
-    const n2 = n.padStart(2, "0");
-    const wantP = !!m[2];
-    if (wantP) return rarity.get(`${n}P`) || rarity.get(`${n2}P`) || undefined;
-    return rarity.get(n) || rarity.get(n2) || undefined;
-  }
+  /* ===== 位置 CSV（CX3 / CX4 / CX5 + 追加CX） ===== */
 
-  // 最後に COMMON を保険
-  const { rarity: commonRarity } = getDicts("COMMON");
-  if (commonRarity.has(t)) return commonRarity.get(t);
 
-  return undefined;
-};
-
-const nameLooseFor = (setKey: string) => (rawToken: string) => {
-  const t = toHalf(String(rawToken || "")).toUpperCase().trim();
-
-  // セット名辞書＆COMMON 名辞書
-  const { name } = getDicts(setKey);
-  const { name: commonName } = getDicts("COMMON");
-
-  // 完全一致
-  if (name.has(t)) return name.get(t);
-
-  // 派生キー（7/07/7P/07P など）で探索
-  for (const k of deriveKeys(t)) {
-    const n = name.get(k) || commonName.get(k);
-    if (n) return n;
-  }
-  return undefined;
-};
 
   
-  /* ===== 位置 CSV（CX3 / CX4） ===== */
+   /* ===== 位置 CSV（CX3 / CX4 / CX5 + 追加CX） ===== */
 
   // 行番号列（インデックス列）を検出する共通関数
-  const detectRowIndexCols = (raw:any[]): Set<number> => {
+  const detectRowIndexCols = (raw: any[]): Set<number> => {
     const idx = new Set<number>();
-    for (let c=1;c<=12;c++){
+    for (let c = 1; c <= 12; c++) {
       let total = 0, pureNo = 0, hasOther = 0;
-      for (const r of raw){
+      for (const r of raw) {
         const arr = (r as any)[`col${c}`] as number[] | undefined;
         total++;
         if (!arr?.length) continue;
         if (arr.length === 1 && arr[0] === r.no) pureNo++;
         else hasOther++;
       }
-      if (total>0 && pureNo/total >= 0.9 && hasOther === 0) idx.add(c);
+      if (total > 0 && pureNo / total >= 0.9 && hasOther === 0) idx.add(c);
     }
     return idx;
   };
 
+    // CX3
   const [cx3Pos, setCx3Pos] = useState<PositionRow[]>([]);
   const [rowIndexCols, setRowIndexCols] = useState<Set<number>>(new Set());
-  useEffect(() => { (async ()=>{
-    try{
-      const raw:any[] = await loadPositions(abs("cx3_positions.csv"));
-      setCx3Pos(raw);
-      setRowIndexCols(detectRowIndexCols(raw));
-    }catch(e){ console.warn("cx3_positions.csv 読込失敗:", e); }
-  })() }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw: any[] = await loadPositions(abs("cx3_positions.csv"));
+        setCx3Pos(raw);
+        setRowIndexCols(detectRowIndexCols(raw));
+      } catch (e) {
+        console.warn("cx3_positions.csv 読込失敗:", e);
+      }
+    })();
+  }, []);
 
   // CX4
   const [cx4Pos, setCx4Pos] = useState<PositionRow[]>([]);
   const [rowIndexColsCX4, setRowIndexColsCX4] = useState<Set<number>>(new Set());
-  useEffect(() => { (async ()=>{
-    try{
-      const raw:any[] = await loadPositions(abs("cx4_positions.csv"));
-      setCx4Pos(raw);
-      setRowIndexColsCX4(detectRowIndexCols(raw));
-    }catch(e){ console.warn("cx4_positions.csv 読込失敗:", e); }
-  })() }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw: any[] = await loadPositions(abs("cx4_positions.csv"));
+        setCx4Pos(raw);
+        setRowIndexColsCX4(detectRowIndexCols(raw));
+      } catch (e) {
+        console.warn("cx4_positions.csv 読込失敗:", e);
+      }
+    })();
+  }, []);
 
-// CX5
-const [cx5Pos, setCx5Pos] = useState<PositionRow[]>([]);
-const [rowIndexColsCX5, setRowIndexColsCX5] = useState<Set<number>>(new Set());
+  // CX5
+  const [cx5Pos, setCx5Pos] = useState<PositionRow[]>([]);
+  const [rowIndexColsCX5, setRowIndexColsCX5] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw: any[] = await loadPositions(abs("cx5_positions.csv"));
+        setCx5Pos(raw);
+        setRowIndexColsCX5(detectRowIndexCols(raw));
+      } catch (e) {
+        console.warn("cx5_positions.csv 読込失敗:", e);
+      }
+    })();
+  }, []);
 
-useEffect(() => { (async ()=>{
-  try{
-    const raw: any[] = await loadPositions(abs("cx5_positions.csv"));
-    setCx5Pos(raw);
-    setRowIndexColsCX5(detectRowIndexCols(raw));
-  }catch(e){ console.warn("cx5_positions.csv 読込失敗:", e); }
-})() }, []);
+        // ★ 追加：CX99 / CX100 など「追加CX弾」用の位置情報マップ
+  const [extraPosBySet, setExtraPosBySet] =
+    useState<Record<string, PositionRow[]>>({});
+  const [rowIndexExtraBySet, setRowIndexExtraBySet] =
+    useState<Record<string, Set<number>>>({});
+
+  useEffect(() => {
+    (async () => {
+      const nextPos: Record<string, PositionRow[]> = {};
+      const nextIdx: Record<string, Set<number>> = {};
+
+      for (const s of cxSets as any[]) {
+        const fam = parseSetFamily(String(s.setId ?? ""));
+        if (!fam) continue;
+
+        // ★ 今は CX100 だけ追加弾扱い
+        if (fam !== "CX100") continue;
+
+        // ---- 読み込み候補パスを列挙 ----
+        const candidates: string[] = [];
+
+        // ① 管理画面が Firestore に書いた positionsPath を最優先
+        if ((s as any).positionsPath) {
+          // 例: "cx_sets/CX100/positions.csv"
+          candidates.push(String((s as any).positionsPath));
+        }
+
+        // ② 旧仕様／ローカル検証用などのファイル名（保険）
+        const base =
+          (s as any).storageBaseName?.toString() || fam.toLowerCase(); // 例: "CX100" → "cx100"
+
+        // Firestorage: cx_sets/CX100/positions.cx100.csv
+        candidates.push(`cx_sets/${fam}/positions.${base}.csv`);
+
+        // public/cx_sets/CX100/cx100_positions.csv
+        candidates.push(`cx_sets/${fam}/${base}_positions.csv`);
+
+        // public/cx100_positions.csv（ルート直下の保険）
+        candidates.push(`${base}_positions.csv`);
+
+        // ③ 念のための固定パス（昔から使っている cx_sets/CX100/positions.csv）
+        candidates.push(`cx_sets/${fam}/positions.csv`);
+
+        let raw: any[] | null = null;
+
+        for (const rel of candidates) {
+          try {
+            const url =
+              rel.startsWith("http://") || rel.startsWith("https://")
+                ? rel
+                : abs(rel);
+
+            // ① 通常読み込み
+            raw = await loadPositions(url);
+
+            // ② CX100 特殊補正：col1〜12 が number なら [number] に変換
+            if (raw && raw.length > 0) {
+              raw = raw.map((r: any) => {
+                const row: any = { ...r };
+                for (let i = 1; i <= 12; i++) {
+                  const v = row[`col${i}`];
+                  if (typeof v === "number") {
+                    row[`col${i}`] = [v];
+                  }
+                }
+                return row;
+              });
+            }
+
+            console.log(
+              "extra positions loaded:",
+              fam,
+              rel,
+              raw?.length || 0,
+            );
+            break;
+          } catch (e) {
+            console.warn("extra positions 読み込み失敗:", fam, rel, e);
+          }
+        }
+
+        if (!raw?.length) continue;
+
+        // detectRowIndexCols はさっき上で定義してあるやつを再利用
+        nextPos[fam] = raw as PositionRow[];
+        nextIdx[fam] = detectRowIndexCols(raw);
+      }
+
+      if (Object.keys(nextPos).length) {
+        setExtraPosBySet((prev) => ({ ...prev, ...nextPos }));
+        setRowIndexExtraBySet((prev) => ({ ...prev, ...nextIdx }));
+      }
+    })();
+  }, [cxSets]);
+
+  // ★ 選択セットに応じた参照
+  const posL = useMemo(() => {
+    const fam = parseSetFamily(leftSet); // "CX3" / "CX4" / "CX5" / "CX99" / "CX100" / ...
+    if (!fam) return [];
+    if (fam === "CX3") return cx3Pos ?? [];
+    if (fam === "CX4") return cx4Pos ?? [];
+    if (fam === "CX5") return cx5Pos ?? [];
+    // それ以外（CX99, CX100, 今後の新弾）は全部 extraPosBySet から取る
+    return extraPosBySet[fam] ?? [];
+  }, [leftSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
+
+  const posR = useMemo(() => {
+    const fam = parseSetFamily(rightSet);
+    if (!fam) return [];
+    if (fam === "CX3") return cx3Pos ?? [];
+    if (fam === "CX4") return cx4Pos ?? [];
+    if (fam === "CX5") return cx5Pos ?? [];
+    return extraPosBySet[fam] ?? [];
+  }, [rightSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
+
+  // ★ 行番号列セットも同じロジックで切り替え
+  const rowIdxL = useMemo(() => {
+    const fam = parseSetFamily(leftSet);
+    if (fam === "CX3") return rowIndexCols;
+    if (fam === "CX4") return rowIndexColsCX4;
+    if (fam === "CX5") return rowIndexColsCX5;
+    return rowIndexExtraBySet[fam] || new Set<number>();
+  }, [
+    leftSet,
+    rowIndexCols,
+    rowIndexColsCX4,
+    rowIndexColsCX5,
+    rowIndexExtraBySet,
+  ]);
+
+  const rowIdxR = useMemo(() => {
+    const fam = parseSetFamily(rightSet);
+    if (fam === "CX3") return rowIndexCols;
+    if (fam === "CX4") return rowIndexColsCX4;
+    if (fam === "CX5") return rowIndexColsCX5;
+    return rowIndexExtraBySet[fam] || new Set<number>();
+  }, [
+    rightSet,
+    rowIndexCols,
+    rowIndexColsCX4,
+    rowIndexColsCX5,
+    rowIndexExtraBySet,
+  ]);
+
+  // --- 対の配列モーダル用：選択肢（①〜）を作る ---
+  // 左グリッドで選べる番号（行番号列は除外してカウント）
+  const dataPosColsL = useMemo(() => {
+    const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(
+      (c) => !rowIdxL.has(c),
+    );
+    return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①.N
+  }, [rowIdxL]);
+
+  // 右グリッドで選べる番号（行番号列は除外してカウント）
+  const dataPosColsR = useMemo(() => {
+    const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(
+      (c) => !rowIdxR.has(c),
+    );
+    return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①.N
+  }, [rowIdxR]);
 
 
-  // 選択セットに応じた参照（CX3/CX4/CX5対応）
-const posL = useMemo(
-  () => (isCx5(leftSet) ? cx5Pos : isCx4(leftSet) ? cx4Pos : cx3Pos),
-  [leftSet, cx3Pos, cx4Pos, cx5Pos]
-);
-const posR = useMemo(
-  () => (isCx5(rightSet) ? cx5Pos : isCx4(rightSet) ? cx4Pos : cx3Pos),
-  [rightSet, cx3Pos, cx4Pos, cx5Pos]
-);
+  /* ===== 連番判定（空行だけスキップ） ===== */
+  // ← このコメントより下は触らなくてOK
 
-// 行番号列セットも切替
-const rowIdxL = useMemo(
-  () => (isCx5(leftSet) ? rowIndexColsCX5 : isCx4(leftSet) ? rowIndexColsCX4 : rowIndexCols),
-  [leftSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5]
-);
-const rowIdxR = useMemo(
-  () => (isCx5(rightSet) ? rowIndexColsCX5 : isCx4(rightSet) ? rowIndexColsCX4 : rowIndexCols),
-  [rightSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5]
-);
-
-
-// --- 対の配列モーダル用：選択肢（①〜）を作る ---
-// 左グリッドで選べる番号（行番号列は除外してカウント）
-const dataPosColsL = useMemo(() => {
-  const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdxL.has(c));
-  return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①..N
-}, [rowIdxL]);
-
-// 右グリッドで選べる番号（行番号列は除外してカウント）
-const dataPosColsR = useMemo(() => {
-  const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(c => !rowIdxR.has(c));
-  return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①..N
-}, [rowIdxR]);
 
 
   /* ===== 連番判定（空行だけスキップ） ===== */
@@ -1137,13 +1538,14 @@ function buildLinesForHit(
 
 
 
-  /* ===== Home 用候補（ルピ付き） ===== */
+    /* ===== Home 用候補（ルピ付き） ===== */
   type Sug = {
     col: number; row: number;
     lines?: ReturnType<typeof buildLinesForHit>;
     noHigh?: boolean; nextAny?: number;
   };
-  // Home 用候補：TOP4 + 必要なら LR★ を 5件目に注入
+
+   // Home 用候補：TOP4 + 必要なら LR★ を 5件目に注入
 const buildSuggestions = (
   pat: number[],
   setKey: string,
@@ -1151,19 +1553,33 @@ const buildSuggestions = (
 ): Sug[] => {
   if (!isCxMode(setKey) || !pat.length) return [];
 
-  // ★ セットごとにポジション表を切り替える（CX3 / CX4 / CX5）
-  const usePos =
-    isCx5(setKey) ? cx5Pos :
-    isCx4(setKey) ? cx4Pos :
-                    cx3Pos;
+  // ★ セットごとに候補を切り替える（CX3 / CX4 / CX5 / CX99 / CX100）
+  const fam = parseSetFamily(setKey);
 
-  const useIdx =
-    isCx5(setKey) ? rowIndexColsCX5 :
-    isCx4(setKey) ? rowIndexColsCX4 :
-                    rowIndexCols;
+  let usePos: PositionRow[] = [];
+  let useIdx: Set<number> = new Set<number>();
+
+  // ---- ここから「どの positions / index を使うか」を決める ----
+  if (fam === "CX3") {
+    usePos = cx3Pos;
+    useIdx = rowIndexCols;
+  } else if (fam === "CX4") {
+    usePos = cx4Pos;
+    useIdx = rowIndexColsCX4;
+  } else if (fam === "CX5") {
+    usePos = cx5Pos;
+    useIdx = rowIndexColsCX5;
+  } else {
+    // Firestore から読んだ追加弾（CX99 / CX100 など）
+    usePos = extraPosBySet[fam] || [];
+    useIdx = rowIndexExtraBySet[fam] || new Set<number>();
+  }
+
+  
 
   if (!usePos.length) return [];
 
+  // ↓この下の既存コードはそのまま（変更なし）------------------------
 
   const hits = buildCx3Hits(usePos, pat, useIdx, direction);
 
@@ -1238,12 +1654,40 @@ const buildSuggestions = (
 
   const candSugL = useMemo(
     () => isCxMode(leftSet) ? buildSuggestions(patLNow, leftSet, "down") : [],
-    [leftSet, patLNow, cx3Pos, cx4Pos, rowIndexCols, rowIndexColsCX4, cx3KeyRarity, cx3KeyName]
+    [
+      leftSet,
+      patLNow,
+      cx3Pos,
+      cx4Pos,
+      cx5Pos,
+      rowIndexCols,
+      rowIndexColsCX4,
+      rowIndexColsCX5,
+      extraPosBySet,
+      rowIndexExtraBySet,
+      cx3KeyRarity,
+      cx3KeyName,
+    ]
   );
+
   const candSugR = useMemo(
     () => isCxMode(rightSet) ? buildSuggestions(patRNow, rightSet, "down") : [],
-    [rightSet, patRNow, cx3Pos, cx4Pos, rowIndexCols, rowIndexColsCX4, cx3KeyRarity, cx3KeyName]
+    [
+      rightSet,
+      patRNow,
+      cx3Pos,
+      cx4Pos,
+      cx5Pos,
+      rowIndexCols,
+      rowIndexColsCX4,
+      rowIndexColsCX5,
+      extraPosBySet,
+      rowIndexExtraBySet,
+      cx3KeyRarity,
+      cx3KeyName,
+    ]
   );
+
 
   /* ====== ルピ算出（表示はしない） ====== */
   const minLoopsFromHits = (

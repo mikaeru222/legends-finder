@@ -23,20 +23,24 @@ export function CsvUploadForm() {
 
       const storage = getStorage();
 
-      // Storage 上の保存パス（自由に変えてOK）
-      const cardsPath = `cx_sets/${setId}/cards.csv`;
-      const positionsPath = `cx_sets/${setId}/positions.csv`;
+      const trimmedSetId = setId.trim();
 
-      // Storage にアップロード（File はそのまま渡せる）
+      // Storage 上の保存パス
+      const cardsPath = `cx_sets/${trimmedSetId}/cards.csv`;
+      const positionsPath = `cx_sets/${trimmedSetId}/positions.csv`;
+
+      // Storage にアップロード
       await uploadBytes(ref(storage, cardsPath), cardsFile);
       await uploadBytes(ref(storage, positionsPath), posFile);
 
-      // Firestore にメタ情報を書き込み
-      const setRef = doc(db, "cx_sets", setId);
+      // Firestore に「この弾ありますよ」を登録（新弾登録）
+      const setRef = doc(db, "cx_sets", trimmedSetId);
       await setDoc(
         setRef,
         {
-          setId,
+          // 表示名（とりあえずIDをそのまま）
+          title: trimmedSetId,
+          setId: trimmedSetId,
           cardsPath,
           positionsPath,
           enabled: true,
