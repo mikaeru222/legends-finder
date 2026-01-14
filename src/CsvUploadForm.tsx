@@ -4,8 +4,8 @@ import { db } from "./firebase";
 import { getStorage, ref, uploadBytes } from "firebase/storage";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
-export function CsvUploadForm() {
-  const [setId, setSetId] = useState("CX5"); // 弾ID（CX5とか）
+export default function CsvUploadForm() {
+  const [setId, setSetId] = useState("CX5");
   const [cardsFile, setCardsFile] = useState<File | null>(null);
   const [posFile, setPosFile] = useState<File | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -22,23 +22,18 @@ export function CsvUploadForm() {
       setStatus("アップロード中...");
 
       const storage = getStorage();
+      const trimmedSetId = setId.trim().toUpperCase();
 
-      const trimmedSetId = setId.trim();
-
-      // Storage 上の保存パス
       const cardsPath = `cx_sets/${trimmedSetId}/cards.csv`;
       const positionsPath = `cx_sets/${trimmedSetId}/positions.csv`;
 
-      // Storage にアップロード
       await uploadBytes(ref(storage, cardsPath), cardsFile);
       await uploadBytes(ref(storage, positionsPath), posFile);
 
-      // Firestore に「この弾ありますよ」を登録（新弾登録）
       const setRef = doc(db, "cx_sets", trimmedSetId);
       await setDoc(
         setRef,
         {
-          // 表示名（とりあえずIDをそのまま）
           title: trimmedSetId,
           setId: trimmedSetId,
           cardsPath,
@@ -47,7 +42,7 @@ export function CsvUploadForm() {
           updatedAt: serverTimestamp(),
           createdAt: serverTimestamp(),
         },
-        { merge: true } // 既にあれば更新
+        { merge: true }
       );
 
       setStatus("アップロード完了！");
@@ -83,34 +78,36 @@ export function CsvUploadForm() {
       <div style={{ marginBottom: 8 }}>
         <label>cards.csv（カード一覧）</label>
         <input
-          type="file"
-          accept=".csv"
-          onChange={(e) => setCardsFile(e.target.files?.[0] ?? null)}
-        />
+  type="file"
+  accept=".csv"
+  onClick={(e) => {
+    // 同じファイルを選び直しても onChange が発火するようにする
+    (e.currentTarget as HTMLInputElement).value = "";
+  }}
+  onChange={(e) => setCardsFile(e.target.files?.[0] ?? null)}
+/>
+
       </div>
 
       <div style={{ marginBottom: 8 }}>
         <label>positions.csv（配列表）</label>
         <input
-          type="file"
-          accept=".csv"
-          onChange={(e) => setPosFile(e.target.files?.[0] ?? null)}
-        />
+  type="file"
+  accept=".csv"
+  onClick={(e) => {
+    // 同じファイルを選び直しても onChange が発火するようにする
+    (e.currentTarget as HTMLInputElement).value = "";
+  }}
+  onChange={(e) => setPosFile(e.target.files?.[0] ?? null)}
+/>
+
       </div>
 
-      <button
-        onClick={onUpload}
-        disabled={uploading}
-        className="btn btn-blue"
-      >
+      <button onClick={onUpload} disabled={uploading} className="btn btn-blue">
         {uploading ? "アップロード中..." : "アップロード"}
       </button>
 
-      {status && (
-        <div style={{ marginTop: 8, fontSize: 12 }}>
-          {status}
-        </div>
-      )}
+      {status && <div style={{ marginTop: 8, fontSize: 12 }}>{status}</div>}
     </div>
   );
 }

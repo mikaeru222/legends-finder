@@ -4,32 +4,85 @@ import type React from "react";
 import { useCsvData } from "./hooks/useCsvData";
 import { circledCol, matchAll } from "./lib/matcher";
 import { useSearchHistory, type HistoryItem } from "./hooks/useSearchHistory";
-import { loadCards as loadCx3Cards, loadPositions, type PositionRow, SPECIAL_P } from "./lib/cx3";
+import {
+  loadCards as loadCx3Cards,
+  loadPositions,
+  type PositionRow,
+  SPECIAL_P,
+} from "./lib/cx3";
 import { colorForRarity, toHalf } from "./lib/rarity";
 import "./firebase";
-import { useAuthUser, useSessionGuard, SignInCard, SignOutButton } from "./auth";
+import {
+  useAuthUser,
+  useSessionGuard,
+  SignInCard,
+  SignOutButton,
+} from "./auth";
 import AdminPage from "./AdminPage";
-// 他の import の近くに追加
 import { useCxSets } from "./hooks/useCxSets";
 import { useUser } from "./useUser";
+import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+
+
+
+import { db } from "./firebase";   // ← dbだけ
+import { useSystemConfig } from "./hooks/useSystemConfig";
+import { checkUserGate } from "./lib/userGate";
+
+
+// cx_sets を「新しい順」に並び替える（updatedAt/createdAt 優先）
+// → テストUPした EY02 が先頭に来る想定
+function sortCxSetsLatestFirst<T extends { id: string; createdAt?: any; updatedAt?: any }>(sets: T[]): T[] {
+  const toMillis = (v: any) => {
+    if (!v) return 0;
+    if (typeof v === "number") return v;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v?.toMillis === "function") return v.toMillis(); // Firestore Timestamp
+    if (typeof v?.seconds === "number") return v.seconds * 1000; // 念のため
+    return 0;
+  };
+
+  return [...sets].sort((a, b) => {
+    const ta = toMillis(a.updatedAt) || toMillis(a.createdAt);
+    const tb = toMillis(b.updatedAt) || toMillis(b.createdAt);
+    if (ta !== tb) return tb - ta; // 新しい方が先頭
+
+    // フォールバック：CX数字があるものは数字降順
+    const na = Number(String(a.id).replace(/^CX/i, ""));
+    const nb = Number(String(b.id).replace(/^CX/i, ""));
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) return nb - na;
+
+    // 最後の保険：文字列降順
+    return String(b.id).localeCompare(String(a.id), "ja");
+  });
+}
+
+
+
+
 // Firestore を優先して読み込むか？（true で Fire優先 / false でローカル優先）
 const USE_FIRESTORE = true;
-import { getFirestore, doc, getDoc } from "firebase/firestore";
-import { app } from "./firebase"; // ★忘れてたら必ず入れる
 
 const firebaseBase =
   "https://firebasestorage.googleapis.com/v0/b/legends-finder-65557.firebasestorage.app/o";
 
+
 function abs(rel: string) {
-  // 絶対URLならそのまま
+  // 絶対URLならそのまま…の前に「旧 appspot バケット」を正規バケットへ寄せる
   if (rel.startsWith("http://") || rel.startsWith("https://")) {
-    return rel;
+   return rel.replace(
+  "/v0/b/legends-finder-65557.appspot.com/o/",
+  "/v0/b/legends-finder-65557.firebasestorage.app/o/"
+);
+
+
   }
 
   // ✅ cx_sets/ から始まるパスだけ Firebase Storage を見る
   if (rel.startsWith("cx_sets/")) {
     return `${firebaseBase}/${encodeURIComponent(rel)}?alt=media`;
   }
+
 
   // それ以外は今まで通り「ローカル public」から読む
   try {
@@ -157,6 +210,17 @@ const normalizeRarity = (raw?: string): string => {
 
   return s; // 不明なものはそのまま返す（上位で判断）
 };
+// ★ 赤（LR）・紫（LR★）・オレンジ（SR★/CP★）のときだけ白文字
+const shouldWhiteText = (token: string, rarityUpper?: string): boolean => {
+  const k = toHalf(String(token)).toUpperCase();
+  const ru = normalizeRarity(rarityUpper || "");
+
+  // SPECIAL_P は紫（LR★）扱い
+  const r = SPECIAL_P.has(k) ? "LR★" : ru;
+
+  return r === "LR" || r === "LR★" || r === "SR★" || r === "CP★";
+};
+
 
 const CIRCLED_MAP: Record<string, number> = { "①":1,"②":2,"③":3,"④":4,"⑤":5,"⑥":6,"⑦":7,"⑧":8,"⑨":9,"⑩":10,"⑪":11,"⑫":12 };
 const toNum = (v:any):number => {
@@ -237,11 +301,20 @@ const detectSetKey = (raw: string): string => {
   return m ? m[0] : s;
 };
 
-// 「CX3/CX4/CX5 だけ」ではなく「CX+数字なら全部」配列表モード扱い
+// 配列表（positions.csv）がある「英字+数字系」はすべて CXモード扱いにする
+// 例: CX100 / CX5 / EY02 / FB1 / P08 / ABC123 など
 const isCxMode = (setKey: string) => {
   const key = detectSetKey(setKey);
-  return /^CX\d+$/.test(key);
+
+  // 従来の CX 系
+  if (/^CX\d+$/i.test(key)) return true;
+
+  // 新弾向け：英字 + 数字 が混ざる表記は全部許可
+  // （表記が今後どう変わっても吸収できる）
+  const fam = parseSetFamily(setKey);
+  return /^[A-Z]+\d+$/i.test(fam);
 };
+
 
 // 表記ブレは detectSetKey で正規化し、完全一致だけ許可（ここは従来通り）
 const isCx3 = (key: string) => detectSetKey(key) === "CX3";
@@ -366,12 +439,109 @@ export default function App() {
     path.endsWith("/admin") ||
     path.includes("/admin/");
 
-  const { user, ready } = useAuthUser();
-  const { checking, ok } = useSessionGuard(user);
-  const [loginMsg, setLoginMsg] = useState(""); // ← もともとのやつ
+   const { user, ready } = useAuthUser();
+const { checking, ok } = useSessionGuard(user);
 
-  // 準備中
-  if (!ready || checking) {
+  const [loginMsg, setLoginMsg] = useState("");
+
+  // ===== Information（ログイン前告知）=====
+type InfoItem = {
+  id: string;
+  title?: string;
+  body?: string;
+  published?: boolean;
+  createdAt?: any;
+};
+
+const [infos, setInfos] = useState<InfoItem[]>([]);
+
+useEffect(() => {
+  const q = query(
+    collection(db, "information"),
+    orderBy("createdAt", "desc"),
+    limit(3)
+  );
+
+  // ★ Firestore が変わったら自動でここが動く
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as InfoItem[];
+      setInfos(list.filter(x => x.published !== false));
+    },
+    (e) => {
+      console.error("information load failed", e);
+      setInfos([]);
+    }
+  );
+
+  return () => unsub(); // 画面を閉じたら解除
+}, []);
+
+// ===== ここまで =====
+
+  // ✅ 追加（1行）：管理者かどうか
+  const { isAdmin } = useUser();
+
+  const { config: systemConfig, loading: systemLoading } = useSystemConfig();
+  if (!systemLoading) console.log("systemConfig:", systemConfig);
+
+
+
+
+
+  // ★ 追加：users コレクションの有効フラグ／期限チェック用
+  const [userProfile, setUserProfile] = useState<any | null>(null);
+  const [userProfileReady, setUserProfileReady] = useState(false);
+  const [userProfileError, setUserProfileError] = useState<string | null>(null);
+
+
+
+  
+
+
+  // ログイン済みユーザーの users/{uid} を読む（通常画面のみ／admin は除外）
+  useEffect(() => {
+    if (!user || isAdminPath) {
+      // 未ログイン or 管理画面のときはチェック不要
+      setUserProfile(null);
+      setUserProfileReady(false);
+      setUserProfileError(null);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        const ref = doc(db, "users", user.uid);
+const snap = await getDoc(ref);
+
+        if (canceled) return;
+        if (snap.exists()) {
+          setUserProfile(snap.data() as any);
+        } else {
+          setUserProfile(null);
+        }
+        setUserProfileError(null);
+      } catch (e) {
+        console.error("failed to load user profile", e);
+        if (!canceled) {
+          setUserProfileError(
+            "ユーザー情報の取得に失敗しました。再度お試しください。"
+          );
+        }
+      } finally {
+        if (!canceled) {
+          setUserProfileReady(true);
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [user, isAdminPath]);
+
+  // 準備中（auth初期化待ちだけ）
+  if (!ready) {
     return (
       <main className="app">
         <header className="header">
@@ -383,34 +553,15 @@ export default function App() {
     );
   }
 
-  // ログインしてるけど sessions に無い（別端末に取られた）
-  if (user && !ok) {
-    return (
-      <main className="app">
-        <header className="header">
-          <div className="header-inner">
-            <h1>ガンバレジェンズ配列表 検索ツール</h1>
-          </div>
-        </header>
-        <SignInCard onBlocked={setLoginMsg} />
-        {loginMsg && (
-          <div
-            style={{
-              maxWidth: 360,
-              margin: "0 auto",
-              padding: "0 16px",
-              color: "#ef4444",
-              fontSize: 12,
-            }}
-          >
-            {loginMsg}
-          </div>
-        )}
-      </main>
-    );
+  // ★ ここが重要：/admin は無条件で管理画面
+  // （管理画面は期限・停止に関係なく入れる）
+  if (isAdminPath) {
+    return <AdminPage />;
   }
 
-  // 未ログイン
+  // ★ ここから下は「通常画面」だけに適用
+
+  // 未ログイン → ログイン画面
   if (!user) {
     return (
       <main className="app">
@@ -420,12 +571,67 @@ export default function App() {
           </div>
         </header>
         <SignInCard onBlocked={setLoginMsg} />
+        {/* ▼ ログイン前のお知らせ ▼ */}
+{infos.length > 0 && (
+  <div style={{ width: 360, margin: "12px auto", borderRadius: 10, overflow: "hidden", border: "1px solid #3b82f6", background: "#ffffff" }}>
+
+
+    {/* 見出しバー */}
+    <div style={{
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  position: "relative",
+  padding: "10px 12px",
+  background: "#3b82f6",
+  fontWeight: 800,
+  color: "#ffffff"
+}}>
+
+      《　お知らせ　》
+      
+    </div>
+
+    {/* 告知本文 */}
+    <div style={{ padding: "10px 12px" }}>
+      {infos.map((info, idx) => (
+        <div
+          key={info.id}
+          style={{
+            padding: "10px 0",
+            borderTop: idx === 0 ? "none" : "1px solid #e5e7eb"
+          }}
+        >
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>
+            {info.title}
+          </div>
+          <div
+  style={{
+    fontSize: 13,
+    whiteSpace: "pre-wrap",
+    overflow: "hidden",
+    display: "-webkit-box",
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: "vertical",
+  }}
+>
+  {info.body}
+</div>
+
+        </div>
+      ))}
+    </div>
+
+  </div>
+)}
+
+{/* ▲ ここまで ▲ */}
+
         {loginMsg && (
           <div
             style={{
               maxWidth: 360,
               margin: "0 auto",
-              padding: "0 16px",
               color: "#ef4444",
               fontSize: 12,
             }}
@@ -437,26 +643,127 @@ export default function App() {
     );
   }
 
-  // ログイン済
-  // ここでだけ /admin かどうかを見て、管理画面 or 通常画面を切り替える
-  if (isAdminPath) {
-    return <AdminPage />;
+  // ★ ログイン済み & 通常画面用の「入口ゲート」
+  //    ここで enabled / validUntil を見て NG なら中身を一切描画しない（ちら見え防止）
+
+  // users/{uid} をまだ読み込み中 → 中身は出さずヘッダーだけ
+  if (!userProfileReady) {
+    return (
+      <main className="app">
+        <header className="header">
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
+      </main>
+    );
   }
 
+  // 読み込みエラー
+  if (userProfileError) {
+    return (
+      <main className="app">
+        <header className="header">
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
+        <div
+          style={{
+            maxWidth: 360,
+            margin: "16px auto",
+            fontSize: 12,
+            color: "#ef4444",
+          }}
+        >
+          {userProfileError}
+        </div>
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <SignOutButton />
+        </div>
+      </main>
+    );
+  }
+
+    // enabled / validUntil / 全員停止ライン(stopAt) をまとめて判定（一本化）
+  // enabled / validUntil / stopAt をまとめて判定
+  const gate = checkUserGate(
+    { enabled: userProfile?.enabled, validUntil: userProfile?.validUntil },
+    systemConfig
+  );
+
+  // gate がNGなら（管理者以外は）ここで止める
+  if (!gate.ok && !isAdmin) {
+    const reason =
+      gate.reason === "disabled"
+        ? "このアカウントは管理者により利用停止されています。"
+        : gate.reason === "expired"
+        ? "このアカウントの有効期限が切れています。"
+        : gate.reason === "globalStop"
+        ? "ただいまメンテナンス中です。"
+        : gate.reason === "noValidUntil"
+        ? "このアカウントはまだ有効期限が設定されていません。"
+        : "利用できません。";
+
+    return (
+      <main className="app">
+        <header className="header">
+          <div className="header-inner">
+            <h1>ガンバレジェンズ配列表 検索ツール</h1>
+          </div>
+        </header>
+
+        <div
+          style={{
+            maxWidth: 360,
+            margin: "16px auto",
+            fontSize: 14,
+            lineHeight: 1.6,
+          }}
+        >
+          <p style={{ color: "#ef4444", marginBottom: 8 }}>{reason}</p>
+          
+          <p style={{ fontSize: 12, color: "#4b5563" }}>
+            継続してご利用される場合は、管理者までお問い合わせください。
+          </p>
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <SignOutButton />
+        </div>
+      </main>
+    );
+  }
+
+  // ここまで来たら「入ってOK」
   return <AppBody />;
+
 }
+// ========= App ここまで =========
+
 
 // ← この下の AppBody は今までどおりでOK
 
 
 function AppBody() {
-  // ★ 追加するのはこの1行だけ
-  const { isAdmin } = useUser();
+  // 管理者のUID（この2人だけ）
+  const ADMIN_UIDS = [
+    "6SVYc1Uc4ebwDrzdWapFwlaBrZ42",
+    "zhC04vre3VNMuVmlE3pEDmdtlH73",
+  ];
+
+  // 今ログインしている人
+  const { user } = useAuthUser();
+
+  // この人が管理者かどうか
+  const isAdmin = !!user && ADMIN_UIDS.includes(user.uid);
+
   const goAdmin = () => {
     const base = window.location.pathname.replace(/\/admin\/?$/, "");
     const withSlash = base.endsWith("/") ? base.slice(0, -1) : base;
     window.location.pathname = withSlash + "/admin";
   };
+
 
   // === 弾データ読み込み ＋ Firestore の弾一覧 ===
 
@@ -465,6 +772,7 @@ function AppBody() {
 
   // 新規：Firestore の cx_sets から弾一覧を読む
   const { sets: cxSets } = useCxSets();
+const cxSetsSorted = useMemo(() => sortCxSetsLatestFirst(cxSets ?? []), [cxSets]);
 
   // rowsNorm は他のロジックでも使っているので今まで通り残す
   const rowsNorm = useMemo(
@@ -477,52 +785,47 @@ function AppBody() {
   );
 
     // Firestore から取った setId 一覧（例: ["CX5","CX99", ...]）
-  const setIdList = useMemo(
-    () => cxSets.map((s) => s.setId),
-    [cxSets]
-  );
+// setId が無い新弾でも doc id（s.id）を使って落とさない
+const setIdList = useMemo(
+  () =>
+    cxSetsSorted
+      .map((s: any) => String(s?.setId ?? s?.id ?? "").trim())
+      .filter(Boolean),
+  [cxSetsSorted]
+);
 
-  // セット選択プルダウン用の候補
-  const setOptions = useMemo(() => {
-    // Firestore ベース
-    const arr = [...setIdList];
 
-    // 念のため、古い固定弾も補完（cx_sets に入っていれば二重にはならない）
-    ["CX3", "CX4", "CX5"].forEach((id) => {
-      if (!arr.includes(id)) arr.push(id);
-    });
 
-    // 数字部分で降順ソート（CX99, CX5, CX4, ... のイメージ）
-    return arr.sort((a, b) => {
-      const na = parseInt(a.replace(/\D+/g, ""), 10);
-      const nb = parseInt(b.replace(/\D+/g, ""), 10);
-      if (!Number.isNaN(na) && !Number.isNaN(nb)) return nb - na; // 降順
-      return b.localeCompare(a, "ja"); // フォールバックも降順
-    });
-  }, [setIdList]);
+    // セット選択プルダウン用の候補
+    const setOptions = useMemo(() => {
+  // Firestore（= cxSetsSorted）由来の順序をそのまま使う
+  const arr = [...setIdList];
 
-    // 最初は空にしておく
+  // ★ ここで並び替えはしない（最新アップ順を潰さない）
+  return arr;
+}, [setIdList]);
+
+
+
+  // 最初は空にしておく（左右の弾選択）
   const [leftSet, setLeftSet] = useState("");
   const [rightSet, setRightSet] = useState("");
+// 左右の弾プルダウンが使えるようになったかどうか
+const [setsReady, setSetsReady] = useState(false);
 
-  // setOptions の先頭（＝最新のCX弾）を初期値として使う
-  useEffect(() => {
-    // setOptions 自体が空なら何もしない
-    if (!setOptions.length) return;
+// setOptions が埋まったら最新の弾で初期化
+useEffect(() => {
+  if (!setOptions.length) return; // まだ候補がないときは何もしない
 
-    // ★ Firestore から setIdList がまだ来ていない間は初期化しない
-    //    （["CX3","CX4","CX5"] だけの段階では触らない）
-    if (!setIdList.length) return;
+  const first = setOptions[0]; // 一番新しい弾
 
-    const first = setOptions[0]; // ここが CX99 になる
+  // まだ何も選ばれていないときだけ初期値を入れる
+  setLeftSet((prev) => prev || first);
+  setRightSet((prev) => prev || first);
 
-    if (!leftSet) {
-      setLeftSet(first);
-    }
-    if (!rightSet) {
-      setRightSet(first);
-    }
-  }, [setOptions, setIdList, leftSet, rightSet]);
+  // 初期化が完了したら true
+  setSetsReady(true);
+}, [setOptions]);
 
 
 
@@ -807,7 +1110,7 @@ const extractRarity = (row: any): string => {
         const fam = parseSetFamily(String(s.setId ?? ""));
 
         // CX3/4/5 はローカルCSVで読み込み済みなのでスキップ
-        if (fam === "CX3" || fam === "CX4" || fam === "CX5") continue;
+       
         if (!fam) continue;
 
         // ---- 読み込み候補パスを列挙 ----
@@ -822,12 +1125,14 @@ const extractRarity = (row: any): string => {
           (s.storageBaseName as string | undefined)?.toString() ||
           fam.toLowerCase(); // 例: "CX100" → "cx100"
 
-        // ルート直下: "cx100_cards.csv"
-        candidates.push(`${base}_cards.csv`);
         // Storage: "cx_sets/CX100/cards.cx100.csv"
-        candidates.push(`cx_sets/${fam}/cards.${base}.csv`);
-        // Storage: "cx_sets/CX100/cards.csv"
-        candidates.push(`cx_sets/${fam}/cards.csv`);
+candidates.push(`cx_sets/${fam}/cards.${base}.csv`);
+// Storage: "cx_sets/CX100/cards.csv"
+candidates.push(`cx_sets/${fam}/cards.csv`);
+
+// ★ 最後に public（今まで動いてた Git/public の保険）
+candidates.push(`${base}_cards.csv`);
+
 
         // ---- 実際に読めるものを一つ選ぶ ----
         let rows: any[] | null = null;
@@ -1057,14 +1362,13 @@ console.log("DEBUG CX firstRowRaw JSON:", fam, JSON.stringify(firstRowRaw ?? {},
       const nextIdx: Record<string, Set<number>> = {};
 
       for (const s of cxSets as any[]) {
-        const fam = parseSetFamily(String(s.setId ?? ""));
-        if (!fam) continue;
+  const fam = parseSetFamily(String(s.setId ?? ""));
+  if (!fam) continue;
 
-        // ★ 今は CX100 だけ追加弾扱い
-        if (fam !== "CX100") continue;
+  
+  // ---- 読み込み候補パスを列挙 ----
+  const candidates: string[] = [];
 
-        // ---- 読み込み候補パスを列挙 ----
-        const candidates: string[] = [];
 
         // ① 管理画面が Firestore に書いた positionsPath を最優先
         if ((s as any).positionsPath) {
@@ -1140,71 +1444,81 @@ console.log("DEBUG CX firstRowRaw JSON:", fam, JSON.stringify(firstRowRaw ?? {},
     })();
   }, [cxSets]);
 
-  // ★ 選択セットに応じた参照
-  const posL = useMemo(() => {
-    const fam = parseSetFamily(leftSet); // "CX3" / "CX4" / "CX5" / "CX99" / "CX100" / ...
-    if (!fam) return [];
-    if (fam === "CX3") return cx3Pos ?? [];
-    if (fam === "CX4") return cx4Pos ?? [];
-    if (fam === "CX5") return cx5Pos ?? [];
-    // それ以外（CX99, CX100, 今後の新弾）は全部 extraPosBySet から取る
-    return extraPosBySet[fam] ?? [];
-  }, [leftSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
+  // ★ 選択セットに応じた参照（positions / 行番号列）
+// Firestore（extraPosBySet / rowIndexExtraBySet）を最優先で使い、無ければローカル（CX3/4/5）にフォールバック
+const posL = useMemo(() => {
+  const fam = parseSetFamily(leftSet);
+  if (!fam) return [];
 
-  const posR = useMemo(() => {
-    const fam = parseSetFamily(rightSet);
-    if (!fam) return [];
-    if (fam === "CX3") return cx3Pos ?? [];
-    if (fam === "CX4") return cx4Pos ?? [];
-    if (fam === "CX5") return cx5Pos ?? [];
-    return extraPosBySet[fam] ?? [];
-  }, [rightSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
+  // Fire（上書き）
+  const firePos = extraPosBySet[fam] ?? [];
+  if (firePos.length > 0) return firePos;
 
-  // ★ 行番号列セットも同じロジックで切り替え
-  const rowIdxL = useMemo(() => {
-    const fam = parseSetFamily(leftSet);
-    if (fam === "CX3") return rowIndexCols;
-    if (fam === "CX4") return rowIndexColsCX4;
-    if (fam === "CX5") return rowIndexColsCX5;
-    return rowIndexExtraBySet[fam] || new Set<number>();
-  }, [
-    leftSet,
-    rowIndexCols,
-    rowIndexColsCX4,
-    rowIndexColsCX5,
-    rowIndexExtraBySet,
-  ]);
+  // ローカル保険（壊れない用）
+  if (fam === "CX3") return cx3Pos ?? [];
+  if (fam === "CX4") return cx4Pos ?? [];
+  if (fam === "CX5") return cx5Pos ?? [];
+  return [];
+}, [leftSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
 
-  const rowIdxR = useMemo(() => {
-    const fam = parseSetFamily(rightSet);
-    if (fam === "CX3") return rowIndexCols;
-    if (fam === "CX4") return rowIndexColsCX4;
-    if (fam === "CX5") return rowIndexColsCX5;
-    return rowIndexExtraBySet[fam] || new Set<number>();
-  }, [
-    rightSet,
-    rowIndexCols,
-    rowIndexColsCX4,
-    rowIndexColsCX5,
-    rowIndexExtraBySet,
-  ]);
+const posR = useMemo(() => {
+  const fam = parseSetFamily(rightSet);
+  if (!fam) return [];
 
-  // --- 対の配列モーダル用：選択肢（①〜）を作る ---
-  // 左グリッドで選べる番号（行番号列は除外してカウント）
-  const dataPosColsL = useMemo(() => {
-    const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(
-      (c) => !rowIdxL.has(c),
-    );
-    return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①.N
-  }, [rowIdxL]);
+  // Fire（上書き）
+  const firePos = extraPosBySet[fam] ?? [];
+  if (firePos.length > 0) return firePos;
 
-  // 右グリッドで選べる番号（行番号列は除外してカウント）
-  const dataPosColsR = useMemo(() => {
-    const dataCols = Array.from({ length: 12 }, (_, i) => i + 1).filter(
-      (c) => !rowIdxR.has(c),
-    );
-    return Array.from({ length: dataCols.length }, (_, i) => i + 1); // ①.N
-  }, [rowIdxR]);
+  // ローカル保険（壊れない用）
+  if (fam === "CX3") return cx3Pos ?? [];
+  if (fam === "CX4") return cx4Pos ?? [];
+  if (fam === "CX5") return cx5Pos ?? [];
+  return [];
+}, [rightSet, cx3Pos, cx4Pos, cx5Pos, extraPosBySet]);
+
+// ★ 行番号列セットも同じロジック（Fire優先 → ダメならローカル）
+const rowIdxL = useMemo(() => {
+  const fam = parseSetFamily(leftSet);
+  if (!fam) return new Set<number>();
+
+  const fireIdx = rowIndexExtraBySet[fam];
+  if (fireIdx && fireIdx.size > 0) return fireIdx;
+
+  if (fam === "CX3") return rowIndexCols;
+  if (fam === "CX4") return rowIndexColsCX4;
+  if (fam === "CX5") return rowIndexColsCX5;
+
+  return new Set<number>();
+}, [leftSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5, rowIndexExtraBySet]);
+
+const rowIdxR = useMemo(() => {
+  const fam = parseSetFamily(rightSet);
+  if (!fam) return new Set<number>();
+
+  const fireIdx = rowIndexExtraBySet[fam];
+  if (fireIdx && fireIdx.size > 0) return fireIdx;
+
+  if (fam === "CX3") return rowIndexCols;
+  if (fam === "CX4") return rowIndexColsCX4;
+  if (fam === "CX5") return rowIndexColsCX5;
+
+  return new Set<number>();
+}, [rightSet, rowIndexCols, rowIndexColsCX4, rowIndexColsCX5, rowIndexExtraBySet]);
+
+ // --- 対の配列モーダル用：選択肢（①〜）を作る ---
+// 左グリッドで選べる番号（行番号列は除外して“実列番号(1..12)”を返す）
+const dataPosColsL = useMemo(() => {
+  return Array.from({ length: 12 }, (_, i) => i + 1).filter(
+    (c) => !rowIdxL.has(c),
+  );
+}, [rowIdxL]);
+
+// 右グリッドで選べる番号（行番号列は除外して“実列番号(1..12)”を返す）
+const dataPosColsR = useMemo(() => {
+  return Array.from({ length: 12 }, (_, i) => i + 1).filter(
+    (c) => !rowIdxR.has(c),
+  );
+}, [rowIdxR]);
 
 
   /* ===== 連番判定（空行だけスキップ） ===== */
@@ -1740,8 +2054,7 @@ useEffect(() => {
   if (pairPicker === 'L') setPairPickPos(pairPreviewL || 1);
 }, [pairPicker]);
 
-// セット変更や画面遷移でプレビューは一旦クリア
-useEffect(() => { setPairPreviewR(null); setPairPreviewL(null); }, [leftSet, rightSet, route]);
+
 
 // ★ ペア保存モーダル
 const [pairSaveModal, setPairSaveModal] = useState<{ open: boolean }>({ open: false });
@@ -1762,7 +2075,13 @@ const [pairEdit, setPairEdit] =
 const [showPairPreview, setShowPairPreview] = useState(false);
 // 右側で“任意に表示する列”（位置＝①〜⑫の番号。nullは未選択）
 const [rightPreviewPos, setRightPreviewPos] = useState<number | null>(null);
-
+// ★★★ ここに貼る ★★★
+useEffect(() => {
+  if (showPairPreview) return;
+  setPairPreviewR(null);
+  setPairPreviewL(null);
+  setRightPreviewPos(null);
+}, [leftSet, rightSet, route, showPairPreview]);
 // ▼ 置き換え：過剰監視をやめて、必要な時だけ同期
 useEffect(() => {
   if (!showPairPreview) return;
@@ -1781,11 +2100,11 @@ useEffect(() => {
 }, [showPairPreview, rightPreviewPos, pairPreviewL, pairFrom]);
 
 
-// ★ 追加：2本1セットの相方（1↔2, 3↔4, …, 11↔12）
 const pairMate = (col?: number | null) => {
-  if (!col || !Number.isFinite(col)) return 1;
+  if (col == null || !Number.isFinite(col)) return null; // ★①に戻さない
   return col % 2 === 0 ? col - 1 : col + 1;
 };
+
 
 
 
@@ -1919,16 +2238,17 @@ function applySavedPair(p: SavedPair) {
               style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
             >
               <div className="select-wrap">
-                <select
-                  value={leftSet}
-                  onChange={(e) => { setLeftSet(e.target.value); setOpenHistL(false); }}
-                  style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
-                >
-                  {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
+  <select
+    value={leftSet}
+    onChange={(e) => { setLeftSet(e.target.value); setOpenHistL(false); }}
+    style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
+  >
+    {setOptions.map(s => (
+      <option key={s} value={s}>{s}</option>
+    ))}
+  </select>
+</div>
+
 
               <input
                 value={candLInput}
@@ -2030,14 +2350,16 @@ function applySavedPair(p: SavedPair) {
             >
               <div className="select-wrap">
                 <select
-                  value={rightSet}
-                  onChange={(e) => { setRightSet(e.target.value); setOpenHistR(false); }}
-                  style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
-                >
-                  {(setOptions.length ? setOptions : sets.length ? sets : ["CX3"]).map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+  value={rightSet}
+  onChange={(e) => { setRightSet(e.target.value); setOpenHistR(false); }}
+  style={{ width: SEL_FIXED_PX, minWidth: SEL_FIXED_PX, maxWidth: SEL_FIXED_PX }}  // 幅固定
+>
+  {setOptions.map(s => (
+    <option key={s} value={s}>{s}</option>
+  ))}
+</select>
+
+
               </div>
 
               <input
@@ -2136,7 +2458,17 @@ function applySavedPair(p: SavedPair) {
           <button
             className="btn btn-orange"
             style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-            onClick={() => { setPairFrom("L"); setRightPreviewPos(pairMate(leftHitCol)); setShowPairPreview(true); }}
+            onClick={() => {
+  setRightSet(leftSet);
+  setPairFrom("L");
+
+  console.log("DEBUG leftHitCol", leftHitCol, "pair", pairMate(leftHitCol)); // ★ここ
+
+  setRightPreviewPos(pairMate(leftHitCol));
+  setShowPairPreview(true);
+}}
+
+
           >
             対の配列の表示
           </button>
@@ -2205,7 +2537,14 @@ function applySavedPair(p: SavedPair) {
           <button
              className="btn btn-orange"
             style={{ background:"#F59E0B", borderColor:"#F59E0B", color:"#fff" }}
-            onClick={() => { setPairFrom("R"); setPairPreviewL(pairMate(rightHitCol)); setShowPairPreview(true); }}
+           onClick={() => {
+  setLeftSet(rightSet); // ★追加：相手側の弾を揃える（バラバラ防止）
+  setPairFrom("R");
+  setPairPreviewL(pairMate(rightHitCol));
+  setShowPairPreview(true);
+}}
+
+
           >
             対の配列の表示
           </button>
@@ -2727,19 +3066,37 @@ function Grid({ byCyl, maxRow, highlightCells, cylinder, visibleCols }:{
 
               <td className="rowhead">{row}</td>
               {cols.map(c=>{
-                const cell = (show[c] || []).find((x:any)=>x.row===row);
-                const isHL = highlightCells?.has?.(`${c}:${row}`);
-                const num = cell?.num;
-                const rar = String(cell?.rarity || "").toUpperCase();
-                // GL側も PDF準拠で N以外は着色
-                const bg = rar ? colorForRarity(rar) : "#FFFFFF";
-                return (
-                  <td key={c} className={`cell ${isHL?"hl":""}`}
-                      style={{ background: bg || "#FFFFFF" }}>
-                    {typeof num === "number" ? num : ""}
-                  </td>
-                );
-              })}
+  const cell = (show[c] || []).find((x:any)=>x.row===row);
+  const isHL = highlightCells?.has?.(`${c}:${row}`);
+  const num = cell?.num;
+
+// ★ ここがポイント：rarity を正規化してから使う（SRP→SR★、CPP→CP★ など）
+const rar = normalizeRarity(cell?.rarity);
+
+// GL側も PDF準拠で N以外は着色
+const bg = rar ? colorForRarity(rar) : "#FFFFFF";
+
+// ✅ 赤・紫・オレンジだけ文字を白にする（LR / LR★ / SR★ / CP★）
+const fg =
+  rar === "LR"  ||
+  rar === "LR★" ||
+  rar === "SR★" ||
+  rar === "CP★"
+    ? "#ffffff"
+    : "#111";
+
+  return (
+    <td
+      key={c}
+      className={`cell ${isHL ? "hl" : ""}`}
+      style={{ background: bg || "#FFFFFF", color: fg }}
+    >
+      {typeof num === "number" ? num : ""}
+    </td>
+  );
+})}
+
+
             </tr>
           ))}
         </tbody>
@@ -2771,7 +3128,7 @@ function GridCx3({
   const viewCols = Array.from({ length: 12 }, (_, i) => dataCols[i] ?? null);
   const singlePos = useFilter && visibleCols && visibleCols.length === 1 ? visibleCols[0] : null;
 
-  const renderTokenLine = (raw: string) => {
+    const renderTokenLine = (raw: string) => {
     const key   = toHalf(String(raw)).toUpperCase();
     const name  = getNameForKey?.(key) || "";
     const rarRaw = getRarityForKey?.(key) || "";
@@ -2780,36 +3137,41 @@ function GridCx3({
     const label = isP ? "LR★" : (rar || "N");
     const bg = shouldTint(key, rar) ? colorForToken(key, rar) : "#FFFFFF";
 
-    const fg = "#111";   // ← 固定の濃い文字色に
+    // ✅ 赤・紫・オレンジだけ文字を白にする
+    const fg =
+      bg === colorForRarity("LR")   || // 赤
+      bg === colorForRarity("LR★")  || // 紫
+      bg === colorForRarity("SR★")  || // オレンジ（SR★）
+      bg === colorForRarity("CP★")     // オレンジ（CP★ も同系ならここ）
+        ? "#ffffff"
+        : "#111";
 
     const text = `${raw} [${label}]${name ? ` ${name}` : ""}`;
 
     return (
-  <div
-  title={text}
-  style={{
-    display: "block",
-    width: "100%",
-    boxSizing: "border-box",
-    background: bg,
-    color: fg,
-    border: "1px solid rgba(0,0,0,0.10)",
-    borderRadius: 4,
-    padding: "2px 6px",
+      <div
+        title={text}
+        style={{
+          display: "block",
+          width: "100%",
+          boxSizing: "border-box",
+          background: bg,
+          color: fg,
+          border: "1px solid rgba(0,0,0,0.10)",
+          borderRadius: 4,
+          padding: "2px 6px",
 
-    /* ここを追加 */
-    whiteSpace: "normal",
-    wordBreak: "break-word",
-    overflowWrap: "anywhere",
-    lineHeight: 1.25,
-  }}
->
-  {text}
-</div>
-
-);
-
+          whiteSpace: "normal",
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
+          lineHeight: 1.25,
+        }}
+      >
+        {text}
+      </div>
+    );
   };
+
 
   return (
     <div className="grid-wrap">
@@ -2895,7 +3257,15 @@ const isHLnone = keyStr ? (highlightNone?.has?.(keyStr) ?? false) : false;
                           const rar = normalizeRarity(getRarityForKey?.(t) || "").toUpperCase();
                           const bg  = shouldTint(t, rar) ? colorForToken(t, rar) : "#FFFFFF";
 
-                          const fg = "#111";
+// ✅ 赤・紫・オレンジだけ文字を白にする
+const fg =
+  bg === colorForRarity("LR")   ||
+  bg === colorForRarity("LR★")  ||
+  bg === colorForRarity("SR★")  ||
+  bg === colorForRarity("CP★")
+    ? "#ffffff"
+    : "#111";
+
 
                           return (
   <div

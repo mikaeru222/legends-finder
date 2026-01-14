@@ -1,8 +1,25 @@
 [
   {
-    "origin": ["http://localhost:5173"],
-    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
-    "maxAgeSeconds": 3600,
-    "responseHeader": ["Content-Type", "x-goog-meta-*"]
+    "origin": [
+      "https://legends-finder-65557.web.app",
+      "https://legends-finder-65557.firebaseapp.com",
+      "http://localhost:5173"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]
+[
+  {
+    "origin": [
+      "https://legends-finder-65557.web.app",
+      "https://legends-finder-65557.firebaseapp.com",
+      "http://localhost:5173",
+      "http://localhost:5174"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
   }
 ]
