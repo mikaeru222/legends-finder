@@ -11,7 +11,7 @@ export type RarityKey = "LR" | "LR★" | "SR" | "SR★" | "R" | "CP" | "CP★" |
 
 export const RARITY_COLORS: Record<RarityKey, string> = {
   LR:    "#FF3C3C", // 赤
-  "LR★": "#A03CFF", // 紫（LRP）
+  "LR★": "#c4b5fd", // 紫（LRP）← 候補と同じ薄い紫に変更
   CP:    "#A0FFA0", // 薄緑
   "CP★": "#FF7F29", // 橙（CPP）
   SR:    "#FFFFA0", // 薄黄
@@ -19,6 +19,7 @@ export const RARITY_COLORS: Record<RarityKey, string> = {
   R:     "#A0FFFF", // 水色
   N:     "#FFFFFF", // 白
 };
+
 
 // 表記ゆれ/同義語 → 正規キー
 const ALIASES: Record<string, RarityKey> = {

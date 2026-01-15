@@ -1448,10 +1448,15 @@ console.log("DEBUG CX firstRowRaw JSON:", fam, JSON.stringify(firstRowRaw ?? {},
 // Firestore（extraPosBySet / rowIndexExtraBySet）を最優先で使い、無ければローカル（CX3/4/5）にフォールバック
 const posL = useMemo(() => {
   const fam = parseSetFamily(leftSet);
-  if (!fam) return [];
+  if (!fam) {
+    console.debug("[POSL_V2] famなし", { leftSet });
+    return [];
+  }
 
   // Fire（上書き）
   const firePos = extraPosBySet[fam] ?? [];
+  console.debug("[POSL_V2] 判定", { fam, fireLen: firePos.length });
+
   if (firePos.length > 0) return firePos;
 
   // ローカル保険（壊れない用）
@@ -1873,20 +1878,38 @@ const buildSuggestions = (
   let usePos: PositionRow[] = [];
   let useIdx: Set<number> = new Set<number>();
 
-  // ---- ここから「どの positions / index を使うか」を決める ----
-  if (fam === "CX3") {
+    // ---- ここから「どの positions / index を使うか」を決める ----
+
+  // ★ Firestore を最優先（CX3/4/5 であっても、Fireにあればそっちを使う）
+  const firePos = extraPosBySet[fam] ?? [];
+  const fireIdx = rowIndexExtraBySet[fam];
+
+  if (firePos.length > 0) {
+    usePos = firePos;
+
+    // rowIndex も必ずセットで（無い/空なら positions から検出）
+    if (fireIdx && fireIdx.size > 0) {
+      useIdx = fireIdx;
+    } else {
+      useIdx = detectRowIndexCols(firePos);
+    }
+
+  } else if (fam === "CX3") {
     usePos = cx3Pos;
     useIdx = rowIndexCols;
+
   } else if (fam === "CX4") {
     usePos = cx4Pos;
     useIdx = rowIndexColsCX4;
+
   } else if (fam === "CX5") {
     usePos = cx5Pos;
     useIdx = rowIndexColsCX5;
+
   } else {
-    // Firestore から読んだ追加弾（CX99 / CX100 など）
-    usePos = extraPosBySet[fam] || [];
-    useIdx = rowIndexExtraBySet[fam] || new Set<number>();
+    // Firestore が無い追加弾は空（＝候補なし）
+    usePos = [];
+    useIdx = new Set<number>();
   }
 
   
@@ -3086,14 +3109,20 @@ const fg =
     : "#111";
 
   return (
-    <td
-      key={c}
-      className={`cell ${isHL ? "hl" : ""}`}
-      style={{ background: bg || "#FFFFFF", color: fg }}
-    >
-      {typeof num === "number" ? num : ""}
-    </td>
-  );
+ <td
+  key={c}
+  className={`cell ${isHL ? "hl" : ""}`}
+  style={{
+    background: bg || "#FFFFFF",
+    color: fg,
+  }}
+>
+  {typeof num === "number" ? num : ""}
+</td>
+
+
+);
+
 })}
 
 
@@ -3227,13 +3256,31 @@ const isHLnone = keyStr ? (highlightNone?.has?.(keyStr) ?? false) : false;
                 }
 
                 const monoBg = ((): string => {
-                  if (!isMono) return "#FFFFFF";
-                  const rarUpper = normalizeRarity(rarKey || "").toUpperCase();
-                  return shouldTint(token!, rarUpper) ? colorForToken(token!, rarUpper) : "#FFFFFF";
-                })();
+  if (!isMono) return "#FFFFFF";
+  const rarUpper = normalizeRarity(rarKey || "").toUpperCase();
+  return shouldTint(token!, rarUpper) ? colorForToken(token!, rarUpper) : "#FFFFFF";
+})();
 
-                const baseStyle: React.CSSProperties = {
+// ★追加：ヒトマスでも濃い背景（赤/紫/オレンジ系）は白文字にする
+const rarUpperMono = isMono ? normalizeRarity(rarKey || "").toUpperCase() : "";
+
+// ここは「濃い背景になるレア」を白文字扱いにしてる（必要なら後で追加OK）
+// ★追加：オレンジ（10P/11P/50Pなど）は token に "P" が入る
+const isPToken = isMono && typeof token === "string" && token.includes("P");
+
+const fgMono =
+  isPToken ||               // ★これを追加
+  rarUpperMono === "LR"  ||
+  rarUpperMono === "LR★" ||
+  rarUpperMono === "SR★" ||
+  rarUpperMono === "CP★"
+    ? "#ffffff"
+    : "#111111";
+
+
+const baseStyle: React.CSSProperties = {
   background: monoBg,
+  color: fgMono, // ★追加（これで単発ヒットも白文字になる）
   padding: 2,
   fontSize: isMono ? 12 : 10,
   lineHeight: 1.15,
@@ -3245,12 +3292,12 @@ const isHLnone = keyStr ? (highlightNone?.has?.(keyStr) ?? false) : false;
            : undefined
 };
 
+return (
+  <td key={i} className="cell" style={baseStyle} title={vals.join("/")}>
+    {isMono ? (
+      token ?? ""
+    ) : (
 
-                return (
-                  <td key={i} className="cell" style={baseStyle} title={vals.join("/")}>
-                    {isMono ? (
-                      token ?? ""
-                    ) : (
                       <div style={{ display:"grid", gap:2, background:"#FFFFFF", justifyItems:"stretch" }}>
                         {vals.map((k, idx) => {
                           const t   = toHalf(String(k)).toUpperCase();
