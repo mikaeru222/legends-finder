@@ -455,7 +455,15 @@ const [permSummary, setPermSummary] = useState<{ [uid: string]: string }>({});
                 gap: 8,
               }}
             >
-              <div style={{ minWidth: 0 }}>
+              <div
+  style={{
+    minWidth: 0,
+    maxHeight: 140,
+    overflow: "auto",
+    wordBreak: "break-word",
+  }}
+>
+
   <div style={{ fontWeight: 600 }}>
     {r.email ?? "(no email)"}{" "}
     {!r.enabled && (
