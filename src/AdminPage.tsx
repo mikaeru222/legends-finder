@@ -672,27 +672,43 @@ await loadInformations(); // 画面を更新
                 />
 
                 <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(copyText);
-                      setCopyDone("コピーしました");
-                    } catch (e) {
-                      setCopyDone("コピー失敗（手で選択してコピーしてね）");
-                    }
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #16a34a",
-                    background: "#16a34a",
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                >
-                  コピー
-                </button>
+  type="button"
+  onClick={() => {
+    try {
+      const el = document.createElement("textarea");
+      el.value = copyText;
+
+      // 画面に見えないようにする（iOS対策）
+      el.style.position = "fixed";
+      el.style.top = "0";
+      el.style.left = "0";
+      el.style.opacity = "0";
+
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+
+      document.execCommand("copy");
+      document.body.removeChild(el);
+
+      setCopyDone("コピーしました");
+    } catch (e) {
+      setCopyDone("コピー失敗（手で選択してコピーしてね）");
+    }
+  }}
+  style={{
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #16a34a",
+    background: "#16a34a",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 900,
+  }}
+>
+  コピー
+</button>
+
 
                 {copyDone && (
                   <div style={{ color: "#16a34a", fontWeight: 800 }}>
