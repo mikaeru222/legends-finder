@@ -2312,7 +2312,8 @@ function applySavedPair(p: SavedPair) {
                     <div key={i} style={{ background:"#e6f0ff", borderRadius:8, border:"1px solid #cfe0ff", padding:"8px 10px" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                         <span style={{ fontWeight:700, color:"#334155" }}>
-                          ヒット位置: {circledCol(s.col)} の {s.row}番目
+                          ヒット位置: <span className="circ-num">{s.col}</span> の {s.row}番目
+
                         </span>
                       </div>
 
@@ -2417,16 +2418,17 @@ function applySavedPair(p: SavedPair) {
             )}
 
             {!!candSugR.length && (
-              <div style={{ display:"grid", gap:8, marginTop:8 }}>
-                {candSugR.map((s,i)=>{
-                  const isLast = i === candSugR.length - 1;
-                  return (
-                    <div key={i} style={{ background:"#e6f0ff", borderRadius:8, border:"1px solid #cfe0ff", padding:"8px 10px" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ fontWeight:700, color:"#334155" }}>
-                          ヒット位置: {circledCol(s.col)} の {s.row}番目
-                        </span>
-                      </div>
+  <div style={{ display:"grid", gap:8, marginTop:8 }}>
+    {candSugR.map((s,i)=>{
+      const isLast = i === candSugR.length - 1;
+      return (
+        <div key={i} style={{ background:"#e6f0ff", borderRadius:8, border:"1px solid #cfe0ff", padding:"8px 10px" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontWeight:700, color:"#334155" }}>
+              ヒット位置: <span className="circ-num">{s.col}</span> の {s.row}番目
+            </span>
+          </div>
+
 
                       {s.lines?.length ? (
                         <div className="res-lines" style={{ marginTop:6 }}>
@@ -2913,7 +2915,7 @@ function applySavedPair(p: SavedPair) {
   role="contentinfo"
   style={{ textAlign: "center" }}   // ← 追加
 >
-  2023–2025 Copyright All Rights Reserved.
+  2023–2026 Copyright All Rights Reserved.
 </footer>
 
     </main>
@@ -3023,8 +3025,9 @@ function ResultList({ hits, getLines, isReverse = false }: {
         <div key={i} className="res-card">
           <div className="res-head">
             <div className="pos">
-              ヒット位置: <strong>{circledCol(h.col)}</strong> の <strong>{h.row}番目</strong>
-            </div>
+  ヒット位置: <strong><span className="circ-num">{h.col}</span></strong> の <strong>{h.row}番目</strong>
+</div>
+
             {isReverse && <span className="rev-badge">逆順</span>}
             {!hasCx3 && (
               <div className="meta">
@@ -3206,15 +3209,20 @@ function GridCx3({
     <div className="grid-wrap">
       <table className="grid">
         <thead>
-          <tr>
-            <th style={{ width:36 }}></th>
-            {viewCols.map((_, i) => {
-              const pos = i + 1;
-              if (useFilter && !circFilter.has(pos)) return null;
-              return <th key={i}>{circledCol(pos)}</th>;
-            })}
-          </tr>
-        </thead>
+  <tr>
+    <th style={{ width:36 }}></th>
+    {viewCols.map((_, i) => {
+      const pos = i + 1;
+      if (useFilter && !circFilter.has(pos)) return null;
+      return (
+        <th key={i}>
+          <span className="circ-num">{pos}</span>
+        </th>
+      );
+    })}
+  </tr>
+</thead>
+
         <tbody>
           {rows.map(r => (
             <tr key={r.no} data-row={r.no}>
@@ -3998,8 +4006,10 @@ main.app .card .section-title{
 .res-lines .res-line .badge, .res-list .res-line .badge{
   display:inline-flex !important; align-items:center !important; justify-content:center !important;
   padding:2px 8px !important; line-height:1 !important; height:auto !important; margin-block:2px !important;
+  margin-right: 6px !important;   /* ★追加：LR と「30:～」の間に空白 */
   border-radius:var(--radius-badge); color:#fff; font-weight:700; font-size:14px;
 }
+
 .badge-lr{ background:#EF4444; }
 .badge-p { background:#B388FF; }
 
