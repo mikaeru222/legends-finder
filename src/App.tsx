@@ -611,7 +611,7 @@ const snap = await getDoc(ref);
     whiteSpace: "pre-wrap",
     overflow: "hidden",
     display: "-webkit-box",
-    WebkitLineClamp: 3,
+    WebkitLineClamp: 6,
     WebkitBoxOrient: "vertical",
   }}
 >
