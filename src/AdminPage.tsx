@@ -39,7 +39,12 @@ const [deletedCxSetIds, setDeletedCxSetIds] = useState<string[]>([]);
   const [deleteFam, setDeleteFam] = useState("");
     const [msg, setMsg] = useState("");
 
-  const [busy, setBusy] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+  // ▼ 追加：全ユーザー一括バックアップ用（1プッシュ）
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState("");
+
 
    // ▼ 告知入力用
   const [infoTitle, setInfoTitle] = useState("");
@@ -119,10 +124,106 @@ const PUBLIC_APP_URL =
   import.meta.env.VITE_PUBLIC_APP_URL ?? "https://legends-finder-65557.web.app";
 // ↑↑↑ ここまで “追加” ↑↑↑
 
+function downloadText(filename: string, text: string, mime: string) {
+  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+// ▼ 追加：人間用CSVを作る
+function toCsvValue(v: any): string {
+  if (v === null || v === undefined) return '""';
+
+  // Firestore Timestamp っぽいものは toDate があれば Date にする
+  if (typeof v === "object" && typeof v.toDate === "function") {
+    try {
+      v = v.toDate();
+    } catch {}
+  }
+
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    const d = String(v.getDate()).padStart(2, "0");
+    const hh = String(v.getHours()).padStart(2, "0");
+    const mm = String(v.getMinutes()).padStart(2, "0");
+    v = `${y}-${m}-${d} ${hh}:${mm}`;
+  }
+
+  const s = String(v).replace(/"/g, '""');
+  return `"${s}"`;
+}
+
+function buildUsersCsv(users: any[]): string {
+  // 人間用：よく使う列。存在しない列は空欄になるだけ（事故らない）
+  const headers = ["uid", "name", "validUntil", "enabled", "memo", "createdAt", "updatedAt"];
+
+  const lines: string[] = [];
+  lines.push(headers.map(toCsvValue).join(","));
+
+  for (const u of users) {
+    lines.push(headers.map((k) => toCsvValue(u?.[k])).join(","));
+  }
+
+  return lines.join("\n");
+}
+
+async function backupAllUsersOnce() {
+  try {
+    setBackupBusy(true);
+    setBackupMsg("バックアップ中…");
+
+
+    const snap = await getDocs(collection(db, "users"));
+
+    const users = snap.docs
+      .map((d) => ({ uid: d.id, ...(d.data() as any) }))
+      .sort((a, b) => String(a.uid).localeCompare(String(b.uid)));
+
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const stamp = `${y}${m}${d}_${hh}${mm}`;
+
+            const csv = buildUsersCsv(users);
+    const bom = "\uFEFF"; // ← Excelで文字化けしないための保険
+
+    downloadText(
+      `users_backup_${stamp}.csv`,
+      bom + csv,
+      "text/csv"
+    );
+
+
+    setBackupMsg(`完了：${users.length}件`);
+    setTimeout(() => setBackupMsg(""), 1200);
+
+  } catch (e) {
+    console.error(e);
+    setBackupMsg("失敗：Consoleを確認");
+    setTimeout(() => setBackupMsg(""), 1200);
+    alert("バックアップに失敗しました");
+  } finally {
+    setBackupBusy(false);
+  }
+}
+
 
   // ▼ 告知を保存する（information に追加）
   const saveInformation = async () => {
     setInfoMsg("");
+
 
     // タイトルか本文、どっちか入ってればOK
     if (!infoTitle.trim() && !infoBody.trim()) {
@@ -814,15 +915,33 @@ await loadInformations(); // 画面を更新
           )}
         </section>
 
-        {/* CSVアップロード */}
+               {/* CSVアップロード */}
         <section style={cardStyle}>
           <CsvUploadForm />
+        </section>
+
+        {/* 全アカウント バックアップ（1プッシュ） */}
+        <section style={cardStyle}>
+          <h2 style={h2Style}>全アカウント バックアップ</h2>
+
+          <button
+            type="button"
+            onClick={backupAllUsersOnce}
+            disabled={backupBusy}
+            style={primaryBtn}
+          >
+                        {backupBusy ? "バックアップ中…" : "全アカウントをバックアップ（CSV）"}
+
+          </button>
+
+          {backupMsg && <div style={{ marginTop: 8, fontSize: 12 }}>{backupMsg}</div>}
         </section>
 
         {/* ユーザー一覧 */}
         <section style={cardStyle}>
           <AdminUsersList />
         </section>
+
       </div>
     </main>
   );

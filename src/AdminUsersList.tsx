@@ -57,6 +57,20 @@ export default function AdminUsersList() {
 const [loading, setLoading] = useState(true);
 const [qText, setQText] = useState("");
 
+// ✅ 追加：name編集（uid -> 入力中の文字）
+const [editNameByUid, setEditNameByUid] = useState<Record<string, string>>({});
+
+// ✅ 追加：保存中（uid -> true）
+const [savingByUid, setSavingByUid] = useState<Record<string, boolean>>({});
+
+// ✅ 追加：保存完了表示（uid -> "保存しました"）
+const [saveMsgByUid, setSaveMsgByUid] = useState<Record<string, string>>({});
+
+// ✅ 追加：コピー完了表示（uid -> "コピーしました"）
+const [copyMsgByUid, setCopyMsgByUid] = useState<Record<string, string>>({});
+
+
+
 // ✅ 追加：停止予定（カレンダー用の保存場所）
 const [stopOpen, setStopOpen] = useState(false);
 const [stopDate, setStopDate] = useState(""); // 例: 2026-01-20
@@ -65,9 +79,28 @@ const [stopTime, setStopTime] = useState(""); // 例: 00:00
 // ★ 追加：UIDごとの権限テキスト
 const [permSummary, setPermSummary] = useState<{ [uid: string]: string }>({});
 
+// ▼ 追加：スマホ判定（520px以下は“狭い”扱い）
+const [isNarrow, setIsNarrow] = useState(false);
 
-   // ✅ 追加：救済予定フラグを ON / OFF する関数
+useEffect(() => {
+  const mq = window.matchMedia("(max-width: 520px)");
+
+  const update = () => setIsNarrow(mq.matches);
+  update();
+
+  // Safari古め対策も入れる
+  if (typeof mq.addEventListener === "function") {
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  } else {
+    mq.addListener(update);
+    return () => mq.removeListener(update);
+  }
+}, []);
+
+    // ✅ 追加：救済予定フラグを ON / OFF する関数
   async function toggleReactivatePending(r: UserRow) {
+
     const ref = doc(db, "users", r.id);
     await updateDoc(ref, {
       reactivatePending: !r.reactivatePending,
@@ -75,12 +108,58 @@ const [permSummary, setPermSummary] = useState<{ [uid: string]: string }>({});
     });
   }
 
+    // ✅ 追加：name を保存する（uid を指定）
+async function saveName(uid: string) {
+  // Firestoreの現在値（rows）を基準にする
+  const current = (rows.find((x) => x.id === uid)?.name ?? "").trim();
+
+  // 入力中があればそれ、なければ現在値（＝未編集で保存しても空上書きにならない）
+  const next = ((editNameByUid[uid] ?? current) ?? "").trim();
+
+  // 変更なしなら何もしない（事故防止）
+  if (next === current) {
+    setSaveMsgByUid((m) => ({ ...m, [uid]: "変更なし" }));
+    window.setTimeout(() => {
+      setSaveMsgByUid((m) => {
+        const n = { ...m };
+        delete n[uid];
+        return n;
+      });
+    }, 1200);
+    return;
+  }
+
+  try {
+    setSavingByUid((m) => ({ ...m, [uid]: true }));
+
+    await updateDoc(doc(db, "users", uid), {
+      name: next,
+      updatedAt: serverTimestamp(),
+    });
+
+    setSaveMsgByUid((m) => ({ ...m, [uid]: "保存しました" }));
+    window.setTimeout(() => {
+      setSaveMsgByUid((m) => {
+        const n = { ...m };
+        delete n[uid];
+        return n;
+      });
+    }, 1200);
+  } finally {
+    setSavingByUid((m) => ({ ...m, [uid]: false }));
+  }
+}
+
+
+
+
   // ✅ 追加：一括有効化（※まずはダミー。白画面を直すため）
    async function bulkReactivatePending() {
     const ok = window.confirm(
       "再開対象 ON のユーザーを一括で有効化します。\n（再開対象フラグは OFF に戻ります）"
     );
     if (!ok) return;
+
 
     // 再開対象ONだけ取得
     const qy = query(
@@ -450,7 +529,8 @@ const [permSummary, setPermSummary] = useState<{ [uid: string]: string }>({});
                 borderRadius: 12,
                 padding: 12,
                 display: "grid",
-                gridTemplateColumns: "1fr auto",
+                gridTemplateColumns: "1fr",
+
                 alignItems: "center",
                 gap: 8,
               }}
@@ -483,9 +563,117 @@ const [permSummary, setPermSummary] = useState<{ [uid: string]: string }>({});
     )}
   </div>
 
-  {r.name && (
-    <div style={{ color: "#6b7280", fontSize: 12 }}>{r.name}</div>
-  )}
+   {/* ▼ name：その場で編集＋保存＋コピー（バックアップ用） */}
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+    <textarea
+      value={editNameByUid[r.id] ?? r.name ?? ""}
+      onChange={(e) =>
+        setEditNameByUid((m) => ({ ...m, [r.id]: e.target.value }))
+      }
+      placeholder="name（購入日など）"
+      rows={2}
+      style={{
+        width: "100%",
+        padding: "6px 8px",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        fontSize: 12,
+        color: "#111827",
+        background: "#fff",
+        resize: "vertical",
+        boxSizing: "border-box",
+        wordBreak: "break-word",
+      }}
+    />
+
+
+    <button
+  type="button"
+  disabled={!!savingByUid[r.id]}
+  onClick={async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await saveName(r.id);
+  }}
+  style={{
+    padding: "6px 10px",
+    borderRadius: 9999,
+    border: "1px solid #d1d5db",
+    background: "#111827",
+    color: "white",
+    fontSize: 12,
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+    opacity: savingByUid[r.id] ? 0.6 : 1,
+  }}
+>
+  {savingByUid[r.id] ? "保存中…" : "保存"}
+</button>
+
+{/* ✅ 追加：保存しました（1.2秒だけ） */}
+{saveMsgByUid[r.id] && (
+  <div style={{ color: "#16a34a", fontWeight: 800, fontSize: 12 }}>
+    {saveMsgByUid[r.id]}
+  </div>
+)}
+
+<button
+  type="button"
+  onClick={async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // ▼ バックアップ用（1行）※必要なら好きに書式変更OK
+    const line = `${r.email ?? ""}\t${r.id}\t${(editNameByUid[r.id] ?? r.name ?? "").trim()}`;
+
+    // iPhoneでも事故りにくいコピー方式（textarea + execCommand）
+    const el = document.createElement("textarea");
+    el.value = line;
+    el.style.position = "fixed";
+    el.style.top = "0";
+    el.style.left = "0";
+    el.style.opacity = "0";
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    document.execCommand("copy");
+    document.body.removeChild(el);
+
+    // ✅ 追加：コピーしました（1.2秒だけ）
+    setCopyMsgByUid((m) => ({ ...m, [r.id]: "コピーしました" }));
+    window.setTimeout(() => {
+      setCopyMsgByUid((m) => {
+        const n = { ...m };
+        delete n[r.id];
+        return n;
+      });
+    }, 1200);
+  }}
+  style={{
+    padding: "6px 10px",
+    borderRadius: 9999,
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    color: "#111827",
+    fontSize: 12,
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+  }}
+>
+  コピー
+</button>
+
+{/* ✅ 追加：コピーしました（1.2秒だけ） */}
+{copyMsgByUid[r.id] && (
+  <div style={{ color: "#16a34a", fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" }}>
+    {copyMsgByUid[r.id]}
+  </div>
+)}
+
+
+
+  </div>
+
 
   <div style={{ color: "#9ca3af", fontSize: 12 }}>
     UID: {r.id}
