@@ -23,11 +23,51 @@ import { useCxSets } from "./hooks/useCxSets";
 import { useUser } from "./useUser";
 import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit, onSnapshot } from "firebase/firestore";
 
-
-
 import { db } from "./firebase";   // ← dbだけ
 import { useSystemConfig } from "./hooks/useSystemConfig";
 import { checkUserGate } from "./lib/userGate";
+
+/* ★ 追加：①〜⑫をSVGで描く（1桁も2桁も潰れない / 楕円にならない） */
+function CircledNumSvg({ n, size = 18 }: { n: number; size?: number }) {
+  const text = String(n);
+  const is2 = text.length >= 2;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-label={text}
+      style={{ display: "inline-block", verticalAlign: "middle" }}
+    >
+      {/* 余白を詰める：円を少し小さく、線を細く */}
+      <circle
+        cx="12"
+        cy="12"
+        r="9.3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="0.85"
+      />
+
+      {/* 数字を大きく：1桁/2桁とも拡大、上下位置を少し上へ */}
+      <text
+        x="12"
+        y="12"
+        dy="0.33em"
+        textAnchor="middle"
+        fontSize={is2 ? 11.0 : 13.6}
+        fontWeight="700"
+        fill="currentColor"
+      >
+        {text}
+      </text>
+    </svg>
+  );
+}
+
+
+
 
 
 // cx_sets を「新しい順」に並び替える（updatedAt/createdAt 優先）
@@ -2312,9 +2352,9 @@ function applySavedPair(p: SavedPair) {
                     <div key={i} style={{ background:"#e6f0ff", borderRadius:8, border:"1px solid #cfe0ff", padding:"8px 10px" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                         <span style={{ fontWeight:700, color:"#334155" }}>
-                          ヒット位置: <span className="circ-num">{s.col}</span> の {s.row}番目
+  ヒット位置: <CircledNumSvg n={s.col} /> の {s.row}番目
+</span>
 
-                        </span>
                       </div>
 
                       {s.lines?.length ? (
@@ -2425,8 +2465,9 @@ function applySavedPair(p: SavedPair) {
         <div key={i} style={{ background:"#e6f0ff", borderRadius:8, border:"1px solid #cfe0ff", padding:"8px 10px" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <span style={{ fontWeight:700, color:"#334155" }}>
-              ヒット位置: <span className="circ-num">{s.col}</span> の {s.row}番目
-            </span>
+  ヒット位置: <CircledNumSvg n={s.col} /> の {s.row}番目
+</span>
+
           </div>
 
 
@@ -3025,8 +3066,9 @@ function ResultList({ hits, getLines, isReverse = false }: {
         <div key={i} className="res-card">
           <div className="res-head">
             <div className="pos">
-  ヒット位置: <strong><span className="circ-num">{h.col}</span></strong> の <strong>{h.row}番目</strong>
+  ヒット位置: <strong><CircledNumSvg n={h.col} /></strong> の <strong>{h.row}番目</strong>
 </div>
+
 
             {isReverse && <span className="rev-badge">逆順</span>}
             {!hasCx3 && (
@@ -3205,7 +3247,7 @@ function GridCx3({
   };
 
 
-  return (
+      return (
     <div className="grid-wrap">
       <table className="grid">
         <thead>
@@ -3216,7 +3258,7 @@ function GridCx3({
       if (useFilter && !circFilter.has(pos)) return null;
       return (
         <th key={i}>
-          <span className="circ-num">{pos}</span>
+          <CircledNumSvg n={pos} />
         </th>
       );
     })}
@@ -3224,6 +3266,7 @@ function GridCx3({
 </thead>
 
         <tbody>
+
           {rows.map(r => (
             <tr key={r.no} data-row={r.no}>
 
